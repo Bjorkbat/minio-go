@@ -38,6 +38,7 @@ type PutObjectOptions struct {
 	ContentEncoding    string
 	ContentDisposition string
 	CacheControl       string
+	ACL			 					 string
 	EncryptMaterials   encrypt.Materials
 	NumThreads         uint
 }
@@ -71,6 +72,9 @@ func (opts PutObjectOptions) Header() (header http.Header) {
 	}
 	if opts.CacheControl != "" {
 		header["Cache-Control"] = []string{opts.CacheControl}
+	}
+	if opts.ACL != "" {
+		header["x-amz-acl"] = []string{opts.ACL}
 	}
 	if opts.EncryptMaterials != nil {
 		header[amzHeaderIV] = []string{opts.EncryptMaterials.GetIV()}
