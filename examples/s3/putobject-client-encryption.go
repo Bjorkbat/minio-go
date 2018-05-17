@@ -2,7 +2,7 @@
 
 /*
  * Minio Go Library for Amazon S3 Compatible Cloud Storage
- * Copyright 2015-2017 Minio, Inc.
+ * Copyright 2018 Minio, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,9 +22,11 @@ package main
 import (
 	"log"
 	"os"
+	"path"
 
 	"github.com/minio/minio-go"
-	"github.com/minio/minio-go/pkg/encrypt"
+	"github.com/minio/sio"
+	"golang.org/x/crypto/argon2"
 )
 
 func main() {
@@ -41,33 +43,33 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	filePath := "my-testfile" // Specify a local file that we will upload
-
-	// Open a local file that we will upload
-	file, err := os.Open(filePath)
+	object, err := os.Open("my-testfile")
 	if err != nil {
 		log.Fatalln(err)
 	}
-	defer file.Close()
-
-	// Get file stats.
-	fstat, err := file.Stat()
+	defer object.Close()
+	objectStat, err := object.Stat()
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	bucketname := "my-bucketname"              // Specify a bucket name - the bucket must already exist
-	objectName := "my-objectname"              // Specify a object name
-	password := "correct horse battery staple" // Specify your password. DO NOT USE THIS ONE - USE YOUR OWN.
-
-	// New SSE-C where the cryptographic key is derived from a password and the objectname + bucketname as salt
-	encryption := encrypt.DefaultPBKDF([]byte(password), []byte(bucketname+objectName))
-
-	// Encrypt file content and upload to the server
-	n, err := s3Client.PutObject(bucketname, objectName, file, fstat.Size(), minio.PutObjectOptions{ServerSideEncryption: encryption})
+	password := []byte("myfavoritepassword")                    // Change as per your needs.
+	salt := []byte(path.Join("my-bucketname", "my-objectname")) // Change as per your needs.
+	encrypted, err := sio.EncryptReader(object, sio.Config{
+		// generate a 256 bit long key.
+		Key: argon2.IDKey(password, salt, 1, 64*1024, 4, 32),
+	})
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	log.Println("Uploaded", "my-objectname", " of size: ", n, "Successfully.")
+	encSize, err := sio.EncryptedSize(uint64(objectStat.Size()))
+	if err != nil {
+		log.Fatalln(err)
+	}
+	_, err = s3Client.PutObject("my-bucketname", "my-objectname", encrypted, int64(encSize), minio.PutObjectOptions{})
+	if err != nil {
+		log.Fatalln(err)
+	}
+	log.Println("Successfully encrypted 'my-objectname'")
 }

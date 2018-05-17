@@ -2,7 +2,7 @@
 
 /*
  * Minio Go Library for Amazon S3 Compatible Cloud Storage
- * Copyright 2015-2017 Minio, Inc.
+ * Copyright 2018 Minio, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,13 +21,17 @@ package main
 
 import (
 	"log"
+	"os"
+	"path"
 
 	"github.com/minio/minio-go"
+	"github.com/minio/sio"
+	"golang.org/x/crypto/argon2"
 )
 
 func main() {
-	// Note: YOUR-ACCESSKEYID, YOUR-SECRETACCESSKEY and my-bucketname are
-	// dummy values, please replace them with original values.
+	// Note: YOUR-ACCESSKEYID, YOUR-SECRETACCESSKEY, my-testfile, my-bucketname and
+	// my-objectname are dummy values, please replace them with original values.
 
 	// Requests are always secure (HTTPS) by default. Set secure=false to enable insecure (HTTP) access.
 	// This boolean value is the last argument for New().
@@ -39,19 +43,24 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	// s3Client.TraceOn(os.Stderr)
-
-	// Fetch the policy at 'my-objectprefix'.
-	policies, err := s3Client.ListBucketPolicies("my-bucketname", "my-objectprefix")
+	obj, err := s3Client.GetObject("my-bucketname", "my-objectname", minio.GetObjectOptions{})
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	// ListBucketPolicies returns a map of objects policy rules and their associated permissions
-	//    e.g.    mybucket/downloadfolder/* => readonly
-	//	      mybucket/shared/* => readwrite
-
-	for resource, permission := range policies {
-		log.Println(resource, " => ", permission)
+	localFile, err := os.Create("my-testfile")
+	if err != nil {
+		log.Fatalln(err)
 	}
+	defer localFile.Close()
+
+	password := []byte("myfavoritepassword")                    // Change as per your needs.
+	salt := []byte(path.Join("my-bucketname", "my-objectname")) // Change as per your needs.
+	_, err = sio.Decrypt(localFile, obj, sio.Config{
+		Key: argon2.IDKey(password, salt, 1, 64*1024, 4, 32), // generate a 256 bit long key.
+	})
+	if err != nil {
+		log.Fatalln(err)
+	}
+	log.Println("Successfully decrypted 'my-objectname' to local file 'my-testfile'")
 }
