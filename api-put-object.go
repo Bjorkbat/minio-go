@@ -86,7 +86,7 @@ func (opts PutObjectOptions) Header() (header http.Header) {
 	if opts.EncryptMaterials != nil {
 		header[amzHeaderIV] = []string{opts.EncryptMaterials.GetIV()}
 		header[amzHeaderKey] = []string{opts.EncryptMaterials.GetKey()}
-		header[amzHeaderMatDesc] = []string{opts.EncryptMaterials.GetDesc()
+		header[amzHeaderMatDesc] = []string{opts.EncryptMaterials.GetDesc()}
 	}
 	if opts.StorageClass != "" {
 		header[amzStorageClass] = []string{opts.StorageClass}
