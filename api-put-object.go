@@ -40,11 +40,11 @@ type PutObjectOptions struct {
 	ContentDisposition      string
 	ContentLanguage         string
 	CacheControl            string
-	ACL			 					      string
 	ServerSideEncryption    encrypt.ServerSide
 	NumThreads              uint
 	StorageClass            string
 	WebsiteRedirectLocation string
+	ACL			 					      string
 }
 
 // getNumThreads - gets the number of threads to be used in the multipart
@@ -83,10 +83,8 @@ func (opts PutObjectOptions) Header() (header http.Header) {
 	if opts.ACL != "" {
 		header["x-amz-acl"] = []string{opts.ACL}
 	}
-	if opts.EncryptMaterials != nil {
-		header[amzHeaderIV] = []string{opts.EncryptMaterials.GetIV()}
-		header[amzHeaderKey] = []string{opts.EncryptMaterials.GetKey()}
-		header[amzHeaderMatDesc] = []string{opts.EncryptMaterials.GetDesc()}
+	if opts.ServerSideEncryption != nil {
+		opts.ServerSideEncryption.Marshal(header)
 	}
 	if opts.StorageClass != "" {
 		header[amzStorageClass] = []string{opts.StorageClass}
