@@ -1,6 +1,6 @@
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage
- * Copyright 2015-2017 Minio, Inc.
+ * MinIO Go Library for Amazon S3 Compatible Cloud Storage
+ * Copyright 2015-2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,14 @@
  * limitations under the License.
  */
 
-package s3signer
+package signer
 
 import (
 	"crypto/hmac"
-	"crypto/sha256"
 	"net/http"
+	"strings"
+
+	"github.com/minio/sha256-simd"
 )
 
 // unsignedPayload - value to be set to X-Amz-Content-Sha256 header when
@@ -46,4 +48,12 @@ func getHostAddr(req *http.Request) string {
 		return req.Host
 	}
 	return req.URL.Host
+}
+
+// Trim leading and trailing spaces and replace sequential spaces with one space, following Trimall()
+// in http://docs.aws.amazon.com/general/latest/gr/sigv4-create-canonical-request.html
+func signV4TrimAll(input string) string {
+	// Compress adjacent spaces (a space is determined by
+	// unicode.IsSpace() internally here) to one space and return
+	return strings.Join(strings.Fields(input), " ")
 }

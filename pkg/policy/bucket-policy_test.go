@@ -1,6 +1,6 @@
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage
- * Copyright 2015-2017 Minio, Inc.
+ * MinIO Go Library for Amazon S3 Compatible Cloud Storage
+ * Copyright 2015-2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 )
 
 // TestUnmarshalBucketPolicy tests unmarsheling various examples
@@ -1592,6 +1592,7 @@ func TestListBucketPolicies(t *testing.T) {
 	downloadUploadCondKeyMap.Add("s3:prefix", set.CreateStringSet("both"))
 	downloadUploadCondMap.Add("StringEquals", downloadUploadCondKeyMap)
 
+	commonSetActions := commonBucketActions.Union(readOnlyBucketActions)
 	testCases := []struct {
 		statements     []Statement
 		bucketName     string
@@ -1630,6 +1631,13 @@ func TestListBucketPolicies(t *testing.T) {
 				Principal: User{AWS: set.CreateStringSet("*")},
 				Resources: set.CreateStringSet("arn:aws:s3:::mybucket/download*"),
 			}}, "mybucket", "", map[string]BucketPolicy{"mybucket/download*": BucketPolicyReadOnly}},
+		{[]Statement{
+			{
+				Actions:   commonSetActions.Union(readOnlyObjectActions),
+				Effect:    "Allow",
+				Principal: User{AWS: set.CreateStringSet("*")},
+				Resources: set.CreateStringSet("arn:aws:s3:::mybucket", "arn:aws:s3:::mybucket/*"),
+			}}, "mybucket", "", map[string]BucketPolicy{"mybucket/*": BucketPolicyReadOnly}},
 		// Write Only
 		{[]Statement{
 			{

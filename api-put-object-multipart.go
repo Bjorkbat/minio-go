@@ -1,6 +1,6 @@
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage
- * Copyright 2015-2017 Minio, Inc.
+ * MinIO Go Library for Amazon S3 Compatible Cloud Storage
+ * Copyright 2015-2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,8 +33,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/minio/minio-go/pkg/encrypt"
-	"github.com/minio/minio-go/pkg/s3utils"
+	"github.com/minio/minio-go/v6/pkg/encrypt"
+	"github.com/minio/minio-go/v6/pkg/s3utils"
 )
 
 func (c Client) putObjectMultipart(ctx context.Context, bucketName, objectName string, reader io.Reader, size int64,
@@ -50,7 +50,7 @@ func (c Client) putObjectMultipart(ctx context.Context, bucketName, objectName s
 				return 0, ErrEntityTooLarge(size, maxSinglePutObjectSize, bucketName, objectName)
 			}
 			// Fall back to uploading as single PutObject operation.
-			return c.putObjectNoChecksum(ctx, bucketName, objectName, reader, size, opts)
+			return c.putObject(ctx, bucketName, objectName, reader, size, opts)
 		}
 	}
 	return n, err
@@ -73,7 +73,7 @@ func (c Client) putObjectMultipartNoStream(ctx context.Context, bucketName, obje
 	var complMultipartUpload completeMultipartUpload
 
 	// Calculate the optimal parts info for a given size.
-	totalPartsCount, partSize, _, err := optimalPartInfo(-1)
+	totalPartsCount, partSize, _, err := optimalPartInfo(-1, opts.PartSize)
 	if err != nil {
 		return 0, err
 	}
@@ -104,7 +104,7 @@ func (c Client) putObjectMultipartNoStream(ctx context.Context, bucketName, obje
 		// Choose hash algorithms to be calculated by hashCopyN,
 		// avoid sha256 with non-v4 signature request or
 		// HTTPS connection.
-		hashAlgos, hashSums := c.hashMaterials()
+		hashAlgos, hashSums := c.hashMaterials(opts.SendContentMd5)
 
 		length, rErr := io.ReadFull(reader, buf)
 		if rErr == io.EOF {
@@ -137,11 +137,10 @@ func (c Client) putObjectMultipartNoStream(ctx context.Context, bucketName, obje
 		}
 
 		// Proceed to upload the part.
-		var objPart ObjectPart
-		objPart, err = c.uploadPart(ctx, bucketName, objectName, uploadID, rd, partNumber,
+		objPart, uerr := c.uploadPart(ctx, bucketName, objectName, uploadID, rd, partNumber,
 			md5Base64, sha256Hex, int64(length), opts.ServerSideEncryption)
-		if err != nil {
-			return totalUploadedSize, err
+		if uerr != nil {
+			return totalUploadedSize, uerr
 		}
 
 		// Save successfully uploaded part metadata.
@@ -259,7 +258,11 @@ func (c Client) uploadPart(ctx context.Context, bucketName, objectName, uploadID
 
 	// Set encryption headers, if any.
 	customHeader := make(http.Header)
-	if sse != nil && sse.Type() != encrypt.S3 && sse.Type() != encrypt.KMS {
+	// https://docs.aws.amazon.com/AmazonS3/latest/API/mpUploadUploadPart.html
+	// Server-side encryption is supported by the S3 Multipart Upload actions.
+	// Unless you are using a customer-provided encryption key, you don't need
+	// to specify the encryption parameters in each UploadPart request.
+	if sse != nil && sse.Type() == encrypt.SSEC {
 		sse.Marshal(customHeader)
 	}
 
@@ -290,8 +293,7 @@ func (c Client) uploadPart(ctx context.Context, bucketName, objectName, uploadID
 	objPart.Size = size
 	objPart.PartNumber = partNumber
 	// Trim off the odd double quotes from ETag in the beginning and end.
-	objPart.ETag = strings.TrimPrefix(resp.Header.Get("ETag"), "\"")
-	objPart.ETag = strings.TrimSuffix(objPart.ETag, "\"")
+	objPart.ETag = trimEtag(resp.Header.Get("ETag"))
 	return objPart, nil
 }
 
