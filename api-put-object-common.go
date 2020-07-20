@@ -1,5 +1,6 @@
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage (C) 2015 Minio, Inc.
+ * MinIO Go Library for Amazon S3 Compatible Cloud Storage
+ * Copyright 2015-2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,19 +18,13 @@
 package minio
 
 import (
-	"hash"
+	"context"
 	"io"
 	"math"
 	"os"
 
-	"github.com/minio/minio-go/pkg/s3utils"
+	"github.com/minio/minio-go/v6/pkg/s3utils"
 )
-
-// Verify if reader is *os.File
-func isFile(reader io.Reader) (ok bool) {
-	_, ok = reader.(*os.File)
-	return
-}
 
 // Verify if reader is *minio.Object
 func isObject(reader io.Reader) (ok bool) {
@@ -39,7 +34,26 @@ func isObject(reader io.Reader) (ok bool) {
 
 // Verify if reader is a generic ReaderAt
 func isReadAt(reader io.Reader) (ok bool) {
-	_, ok = reader.(io.ReaderAt)
+	var v *os.File
+	v, ok = reader.(*os.File)
+	if ok {
+		// Stdin, Stdout and Stderr all have *os.File type
+		// which happen to also be io.ReaderAt compatible
+		// we need to add special conditions for them to
+		// be ignored by this function.
+		for _, f := range []string{
+			"/dev/stdin",
+			"/dev/stdout",
+			"/dev/stderr",
+		} {
+			if f == v.Name() {
+				ok = false
+				break
+			}
+		}
+	} else {
+		_, ok = reader.(io.ReaderAt)
+	}
 	return
 }
 
@@ -50,23 +64,61 @@ func isReadAt(reader io.Reader) (ok bool) {
 // object storage it will have the following parameters as constants.
 //
 //  maxPartsCount - 10000
-//  minPartSize - 64MiB
+//  minPartSize - 128MiB
 //  maxMultipartPutObjectSize - 5TiB
 //
-func optimalPartInfo(objectSize int64) (totalPartsCount int, partSize int64, lastPartSize int64, err error) {
+func optimalPartInfo(objectSize int64, configuredPartSize uint64) (totalPartsCount int, partSize int64, lastPartSize int64, err error) {
 	// object size is '-1' set it to 5TiB.
+	var unknownSize bool
 	if objectSize == -1 {
+		unknownSize = true
 		objectSize = maxMultipartPutObjectSize
 	}
+
 	// object size is larger than supported maximum.
 	if objectSize > maxMultipartPutObjectSize {
 		err = ErrEntityTooLarge(objectSize, maxMultipartPutObjectSize, "", "")
 		return
 	}
-	// Use floats for part size for all calculations to avoid
-	// overflows during float64 to int64 conversions.
-	partSizeFlt := math.Ceil(float64(objectSize / maxPartsCount))
-	partSizeFlt = math.Ceil(partSizeFlt/minPartSize) * minPartSize
+
+	var partSizeFlt float64
+	if configuredPartSize > 0 {
+		if int64(configuredPartSize) > objectSize {
+			err = ErrEntityTooLarge(int64(configuredPartSize), objectSize, "", "")
+			return
+		}
+
+		if !unknownSize {
+			if objectSize > (int64(configuredPartSize) * maxPartsCount) {
+				err = ErrInvalidArgument("Part size * max_parts(10000) is lesser than input objectSize.")
+				return
+			}
+		}
+
+		if configuredPartSize < absMinPartSize {
+			err = ErrInvalidArgument("Input part size is smaller than allowed minimum of 5MiB.")
+			return
+		}
+
+		if configuredPartSize > maxPartSize {
+			err = ErrInvalidArgument("Input part size is bigger than allowed maximum of 5GiB.")
+			return
+		}
+
+		partSizeFlt = float64(configuredPartSize)
+		if unknownSize {
+			// If input has unknown size and part size is configured
+			// keep it to maximum allowed as per 10000 parts.
+			objectSize = int64(configuredPartSize) * maxPartsCount
+		}
+	} else {
+		configuredPartSize = minPartSize
+		// Use floats for part size for all calculations to avoid
+		// overflows during float64 to int64 conversions.
+		partSizeFlt = float64(objectSize / maxPartsCount)
+		partSizeFlt = math.Ceil(partSizeFlt/float64(configuredPartSize)) * float64(configuredPartSize)
+	}
+
 	// Total parts count.
 	totalPartsCount = int(math.Ceil(float64(objectSize) / partSizeFlt))
 	// Part size.
@@ -76,31 +128,9 @@ func optimalPartInfo(objectSize int64) (totalPartsCount int, partSize int64, las
 	return totalPartsCount, partSize, lastPartSize, nil
 }
 
-// hashCopyN - Calculates chosen hashes up to partSize amount of bytes.
-func hashCopyN(hashAlgorithms map[string]hash.Hash, hashSums map[string][]byte, writer io.Writer, reader io.Reader, partSize int64) (size int64, err error) {
-	hashWriter := writer
-	for _, v := range hashAlgorithms {
-		hashWriter = io.MultiWriter(hashWriter, v)
-	}
-
-	// Copies to input at writer.
-	size, err = io.CopyN(hashWriter, reader, partSize)
-	if err != nil {
-		// If not EOF return error right here.
-		if err != io.EOF {
-			return 0, err
-		}
-	}
-
-	for k, v := range hashAlgorithms {
-		hashSums[k] = v.Sum(nil)
-	}
-	return size, err
-}
-
 // getUploadID - fetch upload id if already present for an object name
 // or initiate a new request to fetch a new upload id.
-func (c Client) newUploadID(bucketName, objectName string, metaData map[string][]string) (uploadID string, err error) {
+func (c Client) newUploadID(ctx context.Context, bucketName, objectName string, opts PutObjectOptions) (uploadID string, err error) {
 	// Input validation.
 	if err := s3utils.CheckValidBucketName(bucketName); err != nil {
 		return "", err
@@ -110,7 +140,7 @@ func (c Client) newUploadID(bucketName, objectName string, metaData map[string][
 	}
 
 	// Initiate multipart upload for an object.
-	initMultipartUploadResult, err := c.initiateMultipartUpload(bucketName, objectName, metaData)
+	initMultipartUploadResult, err := c.initiateMultipartUpload(ctx, bucketName, objectName, opts)
 	if err != nil {
 		return "", err
 	}

@@ -1,6 +1,6 @@
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage
- * (C) 2015, 2016, 2017 Minio, Inc.
+ * MinIO Go Library for Amazon S3 Compatible Cloud Storage
+ * Copyright 2015-2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,151 +18,12 @@
 package minio
 
 import (
-	"bytes"
-	"io"
-	"io/ioutil"
-	"net/http"
 	"net/url"
-	"os"
-	"strings"
 	"testing"
 
-	"github.com/minio/minio-go/pkg/credentials"
-	"github.com/minio/minio-go/pkg/policy"
+	"github.com/minio/minio-go/v6/pkg/credentials"
+	"github.com/minio/minio-go/v6/pkg/policy"
 )
-
-type customReader struct{}
-
-func (c *customReader) Read(p []byte) (n int, err error) {
-	return 0, nil
-}
-
-func (c *customReader) Size() (n int64) {
-	return 10
-}
-
-// Tests getReaderSize() for various Reader types.
-func TestGetReaderSize(t *testing.T) {
-	var reader io.Reader
-	size, err := getReaderSize(reader)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size != -1 {
-		t.Fatal("Reader shouldn't have any length.")
-	}
-
-	bytesReader := bytes.NewReader([]byte("Hello World"))
-	size, err = getReaderSize(bytesReader)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size != int64(len("Hello World")) {
-		t.Fatalf("Reader length doesn't match got: %v, want: %v", size, len("Hello World"))
-	}
-
-	size, err = getReaderSize(new(customReader))
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size != int64(10) {
-		t.Fatalf("Reader length doesn't match got: %v, want: %v", size, 10)
-	}
-
-	stringsReader := strings.NewReader("Hello World")
-	size, err = getReaderSize(stringsReader)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size != int64(len("Hello World")) {
-		t.Fatalf("Reader length doesn't match got: %v, want: %v", size, len("Hello World"))
-	}
-
-	// Create request channel.
-	reqCh := make(chan getRequest, 1)
-	// Create response channel.
-	resCh := make(chan getResponse, 1)
-	// Create done channel.
-	doneCh := make(chan struct{})
-
-	objectInfo := ObjectInfo{Size: 10}
-	// Create the first request.
-	firstReq := getRequest{
-		isReadOp:   false, // Perform only a HEAD object to get objectInfo.
-		isFirstReq: true,
-	}
-	// Create the expected response.
-	firstRes := getResponse{
-		objectInfo: objectInfo,
-	}
-	// Send the expected response.
-	resCh <- firstRes
-
-	// Test setting size on the first request.
-	objectReaderFirstReq := newObject(reqCh, resCh, doneCh)
-	defer objectReaderFirstReq.Close()
-	// Not checking the response here...just that the reader size is correct.
-	_, err = objectReaderFirstReq.doGetRequest(firstReq)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-
-	// Validate that the reader size is the objectInfo size.
-	size, err = getReaderSize(objectReaderFirstReq)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size != int64(10) {
-		t.Fatalf("Reader length doesn't match got: %d, wanted %d", size, objectInfo.Size)
-	}
-
-	fileReader, err := ioutil.TempFile(os.TempDir(), "prefix")
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	defer fileReader.Close()
-	defer os.RemoveAll(fileReader.Name())
-
-	size, err = getReaderSize(fileReader)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size == -1 {
-		t.Fatal("Reader length for file cannot be -1.")
-	}
-
-	// Verify for standard input, output and error file descriptors.
-	size, err = getReaderSize(os.Stdin)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size != -1 {
-		t.Fatal("Stdin should have length of -1.")
-	}
-	size, err = getReaderSize(os.Stdout)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size != -1 {
-		t.Fatal("Stdout should have length of -1.")
-	}
-	size, err = getReaderSize(os.Stderr)
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	if size != -1 {
-		t.Fatal("Stderr should have length of -1.")
-	}
-	file, err := os.Open(os.TempDir())
-	if err != nil {
-		t.Fatal("Error:", err)
-	}
-	defer file.Close()
-	_, err = getReaderSize(file)
-	if err == nil {
-		t.Fatal("Input file as directory should throw an error.")
-	}
-}
 
 // Tests valid hosts for location.
 func TestValidBucketLocation(t *testing.T) {
@@ -170,9 +31,9 @@ func TestValidBucketLocation(t *testing.T) {
 		bucketLocation string
 		endpoint       string
 	}{
-		{"us-east-1", "s3.amazonaws.com"},
-		{"unknown", "s3.amazonaws.com"},
-		{"ap-southeast-1", "s3-ap-southeast-1.amazonaws.com"},
+		{"us-east-1", "s3.dualstack.us-east-1.amazonaws.com"},
+		{"unknown", "s3.dualstack.us-east-1.amazonaws.com"},
+		{"ap-southeast-1", "s3.dualstack.ap-southeast-1.amazonaws.com"},
 	}
 	for _, s3Host := range s3Hosts {
 		endpoint := getS3Endpoint(s3Host.bucketLocation)
@@ -193,14 +54,8 @@ func TestErrorResponse(t *testing.T) {
 		t.Fatal("Type conversion failed, we have an empty struct.")
 	}
 
-	// Test http response decoding.
-	var httpResponse *http.Response
-	// Set empty variables
-	httpResponse = nil
-	var bucketName, objectName string
-
 	// Should fail with invalid argument.
-	err = httpRespToErrorResponse(httpResponse, bucketName, objectName)
+	err = httpRespToErrorResponse(nil, "", "")
 	errResp = ToErrorResponse(err)
 	if errResp.Code != "InvalidArgument" {
 		t.Fatal("Empty response input should return invalid argument.")
@@ -244,42 +99,70 @@ func TestBucketPolicyTypes(t *testing.T) {
 
 // Tests optimal part size.
 func TestPartSize(t *testing.T) {
-	_, _, _, err := optimalPartInfo(5000000000000000000)
+	_, _, _, err := optimalPartInfo(5000000000000000000, minPartSize)
 	if err == nil {
 		t.Fatal("Error: should fail")
 	}
-	totalPartsCount, partSize, lastPartSize, err := optimalPartInfo(5497558138880)
+	totalPartsCount, partSize, lastPartSize, err := optimalPartInfo(5243928576, 5*1024*1024)
 	if err != nil {
 		t.Fatal("Error: ", err)
 	}
-	if totalPartsCount != 9103 {
-		t.Fatalf("Error: expecting total parts count of 9987: got %v instead", totalPartsCount)
+	if totalPartsCount != 1001 {
+		t.Fatalf("Error: expecting total parts count of 1001: got %v instead", totalPartsCount)
 	}
-	if partSize != 603979776 {
-		t.Fatalf("Error: expecting part size of 550502400: got %v instead", partSize)
+	if partSize != 5242880 {
+		t.Fatalf("Error: expecting part size of 5242880: got %v instead", partSize)
 	}
-	if lastPartSize != 134217728 {
-		t.Fatalf("Error: expecting last part size of 241172480: got %v instead", lastPartSize)
+	if lastPartSize != 1048576 {
+		t.Fatalf("Error: expecting last part size of 1048576: got %v instead", lastPartSize)
 	}
-	_, partSize, _, err = optimalPartInfo(5000000000)
+	totalPartsCount, partSize, lastPartSize, err = optimalPartInfo(5243928576, 0)
+	if err != nil {
+		t.Fatal("Error: ", err)
+	}
+	if totalPartsCount != 40 {
+		t.Fatalf("Error: expecting total parts count of 40: got %v instead", totalPartsCount)
+	}
+	if partSize != 134217728 {
+		t.Fatalf("Error: expecting part size of 134217728: got %v instead", partSize)
+	}
+	if lastPartSize != 9437184 {
+		t.Fatalf("Error: expecting last part size of 9437184: got %v instead", lastPartSize)
+	}
+	_, partSize, _, err = optimalPartInfo(5000000000, minPartSize)
 	if err != nil {
 		t.Fatal("Error:", err)
 	}
 	if partSize != minPartSize {
 		t.Fatalf("Error: expecting part size of %v: got %v instead", minPartSize, partSize)
 	}
-	totalPartsCount, partSize, lastPartSize, err = optimalPartInfo(-1)
+	// if stream and using default optimal part size determined by sdk
+	totalPartsCount, partSize, lastPartSize, err = optimalPartInfo(-1, 0)
 	if err != nil {
 		t.Fatal("Error:", err)
 	}
-	if totalPartsCount != 9103 {
-		t.Fatalf("Error: expecting total parts count of 9987: got %v instead", totalPartsCount)
+	if totalPartsCount != 8192 {
+		t.Fatalf("Error: expecting total parts count of 8192: got %v instead", totalPartsCount)
 	}
-	if partSize != 603979776 {
-		t.Fatalf("Error: expecting part size of 550502400: got %v instead", partSize)
+	if partSize != 671088640 {
+		t.Fatalf("Error: expecting part size of 671088640: got %v instead", partSize)
 	}
-	if lastPartSize != 134217728 {
-		t.Fatalf("Error: expecting last part size of 241172480: got %v instead", lastPartSize)
+	if lastPartSize != 671088640 {
+		t.Fatalf("Error: expecting last part size of 671088640: got %v instead", lastPartSize)
+	}
+
+	totalPartsCount, partSize, lastPartSize, err = optimalPartInfo(-1, 64*1024*1024)
+	if err != nil {
+		t.Fatal("Error:", err)
+	}
+	if totalPartsCount != 10000 {
+		t.Fatalf("Error: expecting total parts count of 10000: got %v instead", totalPartsCount)
+	}
+	if partSize != 67108864 {
+		t.Fatalf("Error: expecting part size of 67108864: got %v instead", partSize)
+	}
+	if lastPartSize != 67108864 {
+		t.Fatalf("Error: expecting part size of 67108864: got %v instead", lastPartSize)
 	}
 }
 
@@ -304,11 +187,11 @@ func TestMakeTargetURL(t *testing.T) {
 		// Test 4, testing against google storage API
 		{"storage.googleapis.com", true, "mybucket", "", "", nil, url.URL{Host: "mybucket.storage.googleapis.com", Scheme: "https", Path: "/"}, nil},
 		// Test 5, testing against AWS S3 API
-		{"s3.amazonaws.com", true, "mybucket", "myobject", "", nil, url.URL{Host: "mybucket.s3.amazonaws.com", Scheme: "https", Path: "/myobject"}, nil},
+		{"s3.amazonaws.com", true, "mybucket", "myobject", "", nil, url.URL{Host: "mybucket.s3.dualstack.us-east-1.amazonaws.com", Scheme: "https", Path: "/myobject"}, nil},
 		// Test 6
 		{"localhost:9000", false, "mybucket", "myobject", "", nil, url.URL{Host: "localhost:9000", Scheme: "http", Path: "/mybucket/myobject"}, nil},
 		// Test 7, testing with query
-		{"localhost:9000", false, "mybucket", "myobject", "", map[string][]string{"param": []string{"val"}}, url.URL{Host: "localhost:9000", Scheme: "http", Path: "/mybucket/myobject", RawQuery: "param=val"}, nil},
+		{"localhost:9000", false, "mybucket", "myobject", "", map[string][]string{"param": {"val"}}, url.URL{Host: "localhost:9000", Scheme: "http", Path: "/mybucket/myobject", RawQuery: "param=val"}, nil},
 		// Test 8, testing with port 80
 		{"localhost:80", false, "mybucket", "myobject", "", nil, url.URL{Host: "localhost", Scheme: "http", Path: "/mybucket/myobject"}, nil},
 		// Test 9, testing with port 443
@@ -316,9 +199,10 @@ func TestMakeTargetURL(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		// Initialize a Minio client
+		// Initialize a MinIO client
 		c, _ := New(testCase.addr, "foo", "bar", testCase.secure)
-		u, err := c.makeTargetURL(testCase.bucketName, testCase.objectName, testCase.bucketLocation, testCase.queryValues)
+		isVirtualHost := c.isVirtualHostStyleRequest(*c.endpointURL, testCase.bucketName)
+		u, err := c.makeTargetURL(testCase.bucketName, testCase.objectName, testCase.bucketLocation, isVirtualHost, testCase.queryValues)
 		// Check the returned error
 		if testCase.expectedErr == nil && err != nil {
 			t.Fatalf("Test %d: Should succeed but failed with err = %v", i+1, err)

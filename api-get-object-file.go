@@ -1,5 +1,6 @@
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage (C) 2015 Minio, Inc.
+ * MinIO Go Library for Amazon S3 Compatible Cloud Storage
+ * Copyright 2015-2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,15 +18,27 @@
 package minio
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
 
-	"github.com/minio/minio-go/pkg/s3utils"
+	"github.com/minio/minio-go/v6/pkg/s3utils"
 )
 
+// FGetObjectWithContext - download contents of an object to a local file.
+// The options can be used to specify the GET request further.
+func (c Client) FGetObjectWithContext(ctx context.Context, bucketName, objectName, filePath string, opts GetObjectOptions) error {
+	return c.fGetObjectWithContext(ctx, bucketName, objectName, filePath, opts)
+}
+
 // FGetObject - download contents of an object to a local file.
-func (c Client) FGetObject(bucketName, objectName, filePath string) error {
+func (c Client) FGetObject(bucketName, objectName, filePath string, opts GetObjectOptions) error {
+	return c.fGetObjectWithContext(context.Background(), bucketName, objectName, filePath, opts)
+}
+
+// fGetObjectWithContext - fgetObject wrapper function with context
+func (c Client) fGetObjectWithContext(ctx context.Context, bucketName, objectName, filePath string, opts GetObjectOptions) error {
 	// Input validation.
 	if err := s3utils.CheckValidBucketName(bucketName); err != nil {
 		return err
@@ -60,7 +73,7 @@ func (c Client) FGetObject(bucketName, objectName, filePath string) error {
 	}
 
 	// Gather md5sum.
-	objectStat, err := c.StatObject(bucketName, objectName)
+	objectStat, err := c.StatObject(bucketName, objectName, StatObjectOptions{opts})
 	if err != nil {
 		return err
 	}
@@ -74,6 +87,17 @@ func (c Client) FGetObject(bucketName, objectName, filePath string) error {
 		return err
 	}
 
+	// If we return early with an error, be sure to close and delete
+	// filePart.  If we have an error along the way there is a chance
+	// that filePart is somehow damaged, and we should discard it.
+	closeAndRemove := true
+	defer func() {
+		if closeAndRemove {
+			_ = filePart.Close()
+			_ = os.Remove(filePartPath)
+		}
+	}()
+
 	// Issue Stat to get the current offset.
 	st, err = filePart.Stat()
 	if err != nil {
@@ -82,13 +106,12 @@ func (c Client) FGetObject(bucketName, objectName, filePath string) error {
 
 	// Initialize get object request headers to set the
 	// appropriate range offsets to read from.
-	reqHeaders := NewGetReqHeaders()
 	if st.Size() > 0 {
-		reqHeaders.SetRange(st.Size(), 0)
+		opts.SetRange(st.Size(), 0)
 	}
 
 	// Seek to current position for incoming reader.
-	objectReader, objectStat, err := c.getObject(bucketName, objectName, reqHeaders)
+	objectReader, objectStat, _, err := c.getObject(ctx, bucketName, objectName, opts)
 	if err != nil {
 		return err
 	}
@@ -99,6 +122,7 @@ func (c Client) FGetObject(bucketName, objectName, filePath string) error {
 	}
 
 	// Close the file before rename, this is specifically needed for Windows users.
+	closeAndRemove = false
 	if err = filePart.Close(); err != nil {
 		return err
 	}

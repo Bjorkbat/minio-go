@@ -1,6 +1,6 @@
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage
- * (C) 2015, 2016, 2017 Minio, Inc.
+ * Copyright
+ *  2015, 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ package minio
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/xml"
 	"io/ioutil"
 	"net/http"
@@ -28,8 +27,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/minio/minio-go/pkg/credentials"
-	"github.com/minio/minio-go/pkg/s3signer"
+	"github.com/minio/minio-go/v6/pkg/credentials"
+	"github.com/minio/minio-go/v6/pkg/signer"
 )
 
 // Test validates `newBucketLocationCache`.
@@ -68,19 +67,18 @@ func TestBucketLocationCacheOps(t *testing.T) {
 func TestGetBucketLocationRequest(t *testing.T) {
 	// Generates expected http request for getBucketLocation.
 	// Used for asserting with the actual request generated.
-	createExpectedRequest := func(c *Client, bucketName string, req *http.Request) (*http.Request, error) {
+	createExpectedRequest := func(c *Client, bucketName string) (*http.Request, error) {
 		// Set location query.
 		urlValues := make(url.Values)
 		urlValues.Set("location", "")
 
 		// Set get bucket location always as path style.
-		targetURL := c.endpointURL
+		targetURL := *c.endpointURL
 		targetURL.Path = path.Join(bucketName, "") + "/"
 		targetURL.RawQuery = urlValues.Encode()
 
 		// Get a new HTTP request for the method.
-		var err error
-		req, err = http.NewRequest("GET", targetURL.String(), nil)
+		req, err := http.NewRequest("GET", targetURL.String(), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -116,16 +114,14 @@ func TestGetBucketLocationRequest(t *testing.T) {
 		// with signature version '4'.
 		switch {
 		case signerType.IsV4():
-			var contentSha256 string
+			contentSha256 := emptySHA256Hex
 			if c.secure {
 				contentSha256 = unsignedPayload
-			} else {
-				contentSha256 = hex.EncodeToString(sum256([]byte{}))
 			}
 			req.Header.Set("X-Amz-Content-Sha256", contentSha256)
-			req = s3signer.SignV4(*req, accessKeyID, secretAccessKey, sessionToken, "us-east-1")
+			req = signer.SignV4(*req, accessKeyID, secretAccessKey, sessionToken, "us-east-1")
 		case signerType.IsV2():
-			req = s3signer.SignV2(*req, accessKeyID, secretAccessKey)
+			req = signer.SignV2(*req, accessKeyID, secretAccessKey, false)
 		}
 
 		return req, nil
@@ -159,10 +155,10 @@ func TestGetBucketLocationRequest(t *testing.T) {
 		{"storage.googleapis.com", "my-access-key", "my-secret-key", false},
 		{"storage.googleapis.com", "", "my-secret-key", false},
 
-		// endpoint custom domain running Minio server.
-		{"play.minio.io", "", "", false},
-		{"play.minio.io", "my-access-key", "my-secret-key", false},
-		{"play.minio.io", "my-acess-key", "", false},
+		// endpoint custom domain running MinIO server.
+		{"play.min.io", "", "", false},
+		{"play.min.io", "my-access-key", "my-secret-key", false},
+		{"play.min.io", "my-acess-key", "", false},
 	}
 	testCases := []struct {
 		bucketName string
@@ -254,8 +250,7 @@ func TestGetBucketLocationRequest(t *testing.T) {
 
 		// Test passes as expected, but the output values are verified for correctness here.
 		if err == nil && testCase.shouldPass {
-			expectedReq := &http.Request{}
-			expectedReq, err = createExpectedRequest(client, testCase.bucketName, expectedReq)
+			expectedReq, err := createExpectedRequest(client, testCase.bucketName)
 			if err != nil {
 				t.Fatalf("Test %d: Expected request Creation failed", i+1)
 			}

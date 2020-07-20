@@ -1,7 +1,8 @@
 // +build ignore
 
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage (C) 2016 Minio, Inc.
+ * MinIO Go Library for Amazon S3 Compatible Cloud Storage
+ * Copyright 2015-2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,7 +23,7 @@ import (
 	"log"
 	"os"
 
-	minio "github.com/minio/minio-go"
+	minio "github.com/minio/minio-go/v6"
 )
 
 func main() {
@@ -45,7 +46,7 @@ func main() {
 	}
 	defer object.Close()
 
-	n, err := s3Client.PutObjectStreaming("my-bucketname", "my-objectname", object)
+	n, err := s3Client.PutObject("my-bucketname", "my-objectname", object, -1, minio.PutObjectOptions{})
 	if err != nil {
 		log.Fatalln(err)
 	}

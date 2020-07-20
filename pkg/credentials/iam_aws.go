@@ -1,6 +1,6 @@
 /*
- * Minio Go Library for Amazon S3 Compatible Cloud Storage
- * (C) 2017 Minio, Inc.
+ * MinIO Go Library for Amazon S3 Compatible Cloud Storage
+ * Copyright 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,12 +19,17 @@ package credentials
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
+	"fmt"
+	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"time"
+
+	jsoniter "github.com/json-iterator/go"
 )
 
 // DefaultExpiryWindow - Default expiry window.
@@ -46,36 +51,20 @@ type IAM struct {
 	endpoint string
 }
 
-// redirectHeaders copies all headers when following a redirect URL.
-// This won't be needed anymore from go 1.8 (https://github.com/golang/go/issues/4800)
-func redirectHeaders(req *http.Request, via []*http.Request) error {
-	if len(via) == 0 {
-		return nil
-	}
-	for key, val := range via[0].Header {
-		req.Header[key] = val
-	}
-	return nil
-}
-
 // IAM Roles for Amazon EC2
 // http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
 const (
 	defaultIAMRoleEndpoint      = "http://169.254.169.254"
-	defaultIAMSecurityCredsPath = "/latest/meta-data/iam/security-credentials"
+	defaultECSRoleEndpoint      = "http://169.254.170.2"
+	defaultSTSRoleEndpoint      = "https://sts.amazonaws.com"
+	defaultIAMSecurityCredsPath = "/latest/meta-data/iam/security-credentials/"
 )
 
-// NewIAM returns a pointer to a new Credentials object wrapping
-// the IAM. Takes a ConfigProvider to create a EC2Metadata client.
-// The ConfigProvider is satisfied by the session.Session type.
+// NewIAM returns a pointer to a new Credentials object wrapping the IAM.
 func NewIAM(endpoint string) *Credentials {
-	if endpoint == "" {
-		endpoint = defaultIAMRoleEndpoint
-	}
 	p := &IAM{
 		Client: &http.Client{
-			Transport:     http.DefaultTransport,
-			CheckRedirect: redirectHeaders,
+			Transport: http.DefaultTransport,
 		},
 		endpoint: endpoint,
 	}
@@ -86,11 +75,67 @@ func NewIAM(endpoint string) *Credentials {
 // Error will be returned if the request fails, or unable to extract
 // the desired
 func (m *IAM) Retrieve() (Value, error) {
-	roleCreds, err := getCredentials(m.Client, m.endpoint)
+	var roleCreds ec2RoleCredRespBody
+	var err error
+
+	endpoint := m.endpoint
+	switch {
+	case len(os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE")) > 0:
+		if len(endpoint) == 0 {
+			if len(os.Getenv("AWS_REGION")) > 0 {
+				endpoint = "https://sts." + os.Getenv("AWS_REGION") + ".amazonaws.com"
+			} else {
+				endpoint = defaultSTSRoleEndpoint
+			}
+		}
+
+		creds := &STSWebIdentity{
+			Client:          m.Client,
+			stsEndpoint:     endpoint,
+			roleARN:         os.Getenv("AWS_ROLE_ARN"),
+			roleSessionName: os.Getenv("AWS_ROLE_SESSION_NAME"),
+			getWebIDTokenExpiry: func() (*WebIdentityToken, error) {
+				token, err := ioutil.ReadFile(os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE"))
+				if err != nil {
+					return nil, err
+				}
+
+				return &WebIdentityToken{Token: string(token)}, nil
+			},
+		}
+
+		return creds.Retrieve()
+
+	case len(os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI")) > 0:
+		if len(endpoint) == 0 {
+			endpoint = fmt.Sprintf("%s%s", defaultECSRoleEndpoint,
+				os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"))
+		}
+
+		roleCreds, err = getEcsTaskCredentials(m.Client, endpoint)
+
+	case len(os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI")) > 0:
+		if len(endpoint) == 0 {
+			endpoint = os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI")
+
+			var ok bool
+			if ok, err = isLoopback(endpoint); !ok {
+				if err == nil {
+					err = fmt.Errorf("uri host is not a loopback address: %s", endpoint)
+				}
+				break
+			}
+		}
+
+		roleCreds, err = getEcsTaskCredentials(m.Client, endpoint)
+
+	default:
+		roleCreds, err = getCredentials(m.Client, endpoint)
+	}
+
 	if err != nil {
 		return Value{}, err
 	}
-
 	// Expiry window is set to 10secs.
 	m.SetExpiration(roleCreds.Expiration, DefaultExpiryWindow)
 
@@ -127,6 +172,7 @@ func getIAMRoleURL(endpoint string) (*url.URL, error) {
 	if endpoint == "" {
 		endpoint = defaultIAMRoleEndpoint
 	}
+
 	u, err := url.Parse(endpoint)
 	if err != nil {
 		return nil, err
@@ -166,12 +212,36 @@ func listRoleNames(client *http.Client, u *url.URL) ([]string, error) {
 	return credsList, nil
 }
 
+func getEcsTaskCredentials(client *http.Client, endpoint string) (ec2RoleCredRespBody, error) {
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return ec2RoleCredRespBody{}, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return ec2RoleCredRespBody{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ec2RoleCredRespBody{}, errors.New(resp.Status)
+	}
+
+	respCreds := ec2RoleCredRespBody{}
+	if err := jsoniter.NewDecoder(resp.Body).Decode(&respCreds); err != nil {
+		return ec2RoleCredRespBody{}, err
+	}
+
+	return respCreds, nil
+}
+
 // getCredentials - obtains the credentials from the IAM role name associated with
 // the current EC2 service.
 //
 // If the credentials cannot be found, or there is an error
 // reading the response an error will be returned.
 func getCredentials(client *http.Client, endpoint string) (ec2RoleCredRespBody, error) {
+
 	// http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html
 	u, err := getIAMRoleURL(endpoint)
 	if err != nil {
@@ -214,7 +284,7 @@ func getCredentials(client *http.Client, endpoint string) (ec2RoleCredRespBody, 
 	}
 
 	respCreds := ec2RoleCredRespBody{}
-	if err := json.NewDecoder(resp.Body).Decode(&respCreds); err != nil {
+	if err := jsoniter.NewDecoder(resp.Body).Decode(&respCreds); err != nil {
 		return ec2RoleCredRespBody{}, err
 	}
 
@@ -224,4 +294,29 @@ func getCredentials(client *http.Client, endpoint string) (ec2RoleCredRespBody, 
 	}
 
 	return respCreds, nil
+}
+
+// isLoopback identifies if a uri's host is on a loopback address
+func isLoopback(uri string) (bool, error) {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return false, err
+	}
+
+	host := u.Hostname()
+	if len(host) == 0 {
+		return false, fmt.Errorf("can't parse host from uri: %s", uri)
+	}
+
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		return false, err
+	}
+	for _, ip := range ips {
+		if !net.ParseIP(ip).IsLoopback() {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
