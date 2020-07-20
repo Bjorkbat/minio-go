@@ -20,9 +20,13 @@
 package main
 
 import (
+	"context"
+	"encoding/xml"
 	"log"
 
-	"github.com/minio/minio-go/v6"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/replication"
 )
 
 func main() {
@@ -34,15 +38,27 @@ func main() {
 
 	// New returns an Amazon S3 compatible client object. API compatibility (v2 or v4) is automatically
 	// determined based on the Endpoint value.
-	s3Client, err := minio.New("s3.amazonaws.com", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
+	s3Client, err := minio.New("s3.amazonaws.com", &minio.Options{
+		Creds:  credentials.NewStaticV4("YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", ""),
+		Secure: true,
+	})
 	if err != nil {
 		log.Fatalln(err)
 	}
 
 	// s3Client.TraceOn(os.Stderr)
 
-	// Get default encryption configuration set on a S3 bucket
-	err = s3Client.DeleteBucketEncryption("my-bucketname")
+	replicationStr := `<ReplicationConfiguration><Rule><ID>string</ID><Status>Enabled</Status><Priority>1</Priority><DeleteMarkerReplication><Status>Disabled</Status></DeleteMarkerReplication><Destination><Bucket>arn:aws:s3:::dest</Bucket></Destination><Filter><And><Prefix>Prefix</Prefix><Tag><Key>Tag-Key1</Key><Value>Tag-Value1</Value></Tag><Tag><Key>Tag-Key2</Key><Value>Tag-Value2</Value></Tag></And></Filter></Rule></ReplicationConfiguration>`
+	var replCfg replication.Config
+	err = xml.Unmarshal([]byte(replicationStr), &replCfg)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	// This replication ARN should have been generated for replication endpoint using `mc admin bucket remote` command
+	replCfg.ReplicationARN = "arn:minio:s3::dadddae7-f1d7-440f-b5d6-651aa9a8c8a7:*"
+	// Set replication config on a bucket
+	err = s3Client.SetBucketReplication(context.Background(), "my-bucketname", replCfg)
 	if err != nil {
 		log.Fatalln(err)
 	}

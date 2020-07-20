@@ -8,7 +8,7 @@ This document assumes that you have a working [Go development environment](https
 
 ## Download from Github
 ```sh
-GO111MODULE=on go get github.com/minio/minio-go/v6
+GO111MODULE=on go get github.com/minio/minio-go/v7
 ```
 
 ## Initialize MinIO Client
@@ -17,17 +17,17 @@ MinIO client requires the following four parameters specified to connect to an A
 | Parameter  | Description|
 | :---         |     :---     |
 | endpoint   | URL to object storage service.   |
-| accessKeyID | Access key is the user ID that uniquely identifies your account. |   
-| secretAccessKey | Secret key is the password to your account. |
-| secure | Set this value to 'true' to enable secure (HTTPS) access. |
+| _minio.Options_ | All the options such as credentials, custom transport etc. |
 
 
 ```go
 package main
 
 import (
-	"github.com/minio/minio-go/v6"
 	"log"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 func main() {
@@ -37,7 +37,10 @@ func main() {
 	useSSL := true
 
 	// Initialize minio client object.
-	minioClient, err := minio.New(endpoint, accessKeyID, secretAccessKey, useSSL)
+	minioClient, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
+		Secure: useSSL,
+	})
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -56,8 +59,11 @@ We will use the MinIO server running at [https://play.min.io](https://play.min.i
 package main
 
 import (
-	"github.com/minio/minio-go/v6"
+	"context"
 	"log"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 func main() {
@@ -67,7 +73,10 @@ func main() {
 	useSSL := true
 
 	// Initialize minio client object.
-	minioClient, err := minio.New(endpoint, accessKeyID, secretAccessKey, useSSL)
+	minioClient, err := minio.New(endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
+		Secure: useSSL,
+	})
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -76,7 +85,7 @@ func main() {
 	bucketName := "mymusic"
 	location := "us-east-1"
 
-	err = minioClient.MakeBucket(bucketName, location)
+	err = minioClient.MakeBucket(context.Background(), bucketName, MakeBucketOptions{Region: location})
 	if err != nil {
 		// Check to see if we already own this bucket (which happens if you run this twice)
 		exists, errBucketExists := minioClient.BucketExists(bucketName)
@@ -95,7 +104,7 @@ func main() {
 	contentType := "application/zip"
 
 	// Upload the zip file with FPutObject
-	n, err := minioClient.FPutObject(bucketName, objectName, filePath, minio.PutObjectOptions{ContentType:contentType})
+	n, err := minioClient.FPutObject(context.Background(), bucketName, objectName, filePath, minio.PutObjectOptions{ContentType: contentType})
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -137,18 +146,15 @@ The full API Reference is available here.
 * [`GetBucketNotification`](https://docs.min.io/docs/golang-client-api-reference#GetBucketNotification)
 * [`RemoveAllBucketNotification`](https://docs.min.io/docs/golang-client-api-reference#RemoveAllBucketNotification)
 * [`ListenBucketNotification`](https://docs.min.io/docs/golang-client-api-reference#ListenBucketNotification) (MinIO Extension)
+* [`ListenNotification`](https://docs.min.io/docs/golang-client-api-reference#ListenNotification) (MinIO Extension)
 
 ### API Reference : File Object Operations
 * [`FPutObject`](https://docs.min.io/docs/golang-client-api-reference#FPutObject)
 * [`FGetObject`](https://docs.min.io/docs/golang-client-api-reference#FGetObject)
-* [`FPutObjectWithContext`](https://docs.min.io/docs/golang-client-api-reference#FPutObjectWithContext)
-* [`FGetObjectWithContext`](https://docs.min.io/docs/golang-client-api-reference#FGetObjectWithContext)
 
 ### API Reference : Object Operations
 * [`GetObject`](https://docs.min.io/docs/golang-client-api-reference#GetObject)
 * [`PutObject`](https://docs.min.io/docs/golang-client-api-reference#PutObject)
-* [`GetObjectWithContext`](https://docs.min.io/docs/golang-client-api-reference#GetObjectWithContext)
-* [`PutObjectWithContext`](https://docs.min.io/docs/golang-client-api-reference#PutObjectWithContext)
 * [`PutObjectStreaming`](https://docs.min.io/docs/golang-client-api-reference#PutObjectStreaming)
 * [`StatObject`](https://docs.min.io/docs/golang-client-api-reference#StatObject)
 * [`CopyObject`](https://docs.min.io/docs/golang-client-api-reference#CopyObject)
@@ -195,11 +201,17 @@ The full API Reference is available here.
 * [getbucketencryption.go](https://github.com/minio/minio-go/blob/master/examples/s3/getbucketencryption.go)
 * [deletebucketencryption.go](https://github.com/minio/minio-go/blob/master/examples/s3/deletebucketencryption.go)
 
+### Full Examples : Bucket replication Operations
+* [setbucketreplication.go](https://github.com/minio/minio-go/blob/master/examples/s3/setbucketreplication.go)
+* [getbucketreplication.go](https://github.com/minio/minio-go/blob/master/examples/s3/getbucketreplication.go)
+* [removebucketreplication.go](https://github.com/minio/minio-go/blob/master/examples/s3/removebucketreplication.go)
+
 ### Full Examples : Bucket notification Operations
 * [setbucketnotification.go](https://github.com/minio/minio-go/blob/master/examples/s3/setbucketnotification.go)
 * [getbucketnotification.go](https://github.com/minio/minio-go/blob/master/examples/s3/getbucketnotification.go)
 * [removeallbucketnotification.go](https://github.com/minio/minio-go/blob/master/examples/s3/removeallbucketnotification.go)
 * [listenbucketnotification.go](https://github.com/minio/minio-go/blob/master/examples/minio/listenbucketnotification.go) (MinIO Extension)
+* [listennotification.go](https://github.com/minio/minio-go/blob/master/examples/minio/listen-notification.go) (MinIO Extension)
 
 ### Full Examples : File Object Operations
 * [fputobject.go](https://github.com/minio/minio-go/blob/master/examples/s3/fputobject.go)

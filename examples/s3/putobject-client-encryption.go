@@ -20,11 +20,13 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"path"
 
-	"github.com/minio/minio-go/v6"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/sio"
 	"golang.org/x/crypto/argon2"
 )
@@ -38,7 +40,10 @@ func main() {
 
 	// New returns an Amazon S3 compatible client object. API compatibility (v2 or v4) is automatically
 	// determined based on the Endpoint value.
-	s3Client, err := minio.New("s3.amazonaws.com", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
+	s3Client, err := minio.New("s3.amazonaws.com", &minio.Options{
+		Creds:  credentials.NewStaticV4("YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", ""),
+		Secure: true,
+	})
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -67,7 +72,7 @@ func main() {
 	if err != nil {
 		log.Fatalln(err)
 	}
-	_, err = s3Client.PutObject("my-bucketname", "my-objectname", encrypted, int64(encSize), minio.PutObjectOptions{})
+	_, err = s3Client.PutObject(context.Background(), "my-bucketname", "my-objectname", encrypted, int64(encSize), minio.PutObjectOptions{})
 	if err != nil {
 		log.Fatalln(err)
 	}

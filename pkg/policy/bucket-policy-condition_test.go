@@ -18,11 +18,13 @@
 package policy
 
 import (
-	"encoding/json"
 	"testing"
 
-	"github.com/minio/minio-go/v6/pkg/set"
+	jsoniter "github.com/json-iterator/go"
+	"github.com/minio/minio-go/v7/pkg/set"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // ConditionKeyMap.Add() is called and the result is validated.
 func TestConditionKeyMapAdd(t *testing.T) {

@@ -20,10 +20,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"time"
 
-	"github.com/minio/minio-go/v6"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 func main() {
@@ -35,7 +37,10 @@ func main() {
 
 	// New returns an Amazon S3 compatible client object. API compatibility (v2 or v4) is automatically
 	// determined based on the Endpoint value.
-	s3Client, err := minio.New("s3.amazonaws.com", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
+	s3Client, err := minio.New("s3.amazonaws.com", &minio.Options{
+		Creds:  credentials.NewStaticV4("YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", ""),
+		Secure: true,
+	})
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -44,38 +49,30 @@ func main() {
 	// s3Client.TraceOn(os.Stderr)
 
 	// Source object
-	src := minio.NewSourceInfo("my-sourcebucketname", "my-sourceobjectname", nil)
-
-	// All following conditions are allowed and can be combined together.
-
-	// Set modified condition, copy object modified since 2014 April.
-	src.SetModifiedSinceCond(time.Date(2014, time.April, 0, 0, 0, 0, 0, time.UTC))
-
-	// Set unmodified condition, copy object unmodified since 2014 April.
-	// src.SetUnmodifiedSinceCond(time.Date(2014, time.April, 0, 0, 0, 0, 0, time.UTC))
-
-	// Set matching ETag condition, copy object which matches the following ETag.
-	// src.SetMatchETagCond("31624deb84149d2f8ef9c385918b653a")
-
-	// Set matching ETag except condition, copy object which does not match the following ETag.
-	// src.SetMatchETagExceptCond("31624deb84149d2f8ef9c385918b653a")
-
-	tags := map[string]string{
-		"Tag1": "Value1",
-		"Tag2": "Value2",
+	src := minio.CopySrcOptions{
+		Bucket: "my-sourcebucketname",
+		Object: "my-sourceobjectname",
+		// All following conditions are allowed and can be combined together.
+		// Set modified condition, copy object modified since 2014 April.
+		MatchModifiedSince: time.Date(2014, time.April, 0, 0, 0, 0, 0, time.UTC),
 	}
 
 	// Destination object
-	dst, err := minio.NewDestinationInfoWithOptions("my-bucketname", "my-objectname", minio.DestInfoOptions{
-		UserTags: tags, ReplaceTags: true,
-	})
-	if err != nil {
-		log.Fatalln(err)
+	dst := minio.CopyDestOptions{
+		Bucket:      "my-bucketname",
+		Object:      "my-objectname",
+		ReplaceTags: true,
+		UserTags: map[string]string{
+			"Tag1": "Value1",
+			"Tag2": "Value2",
+		},
 	}
+
 	// Initiate copy object.
-	err = s3Client.CopyObject(dst, src)
+	ui, err := s3Client.CopyObject(context.Background(), dst, src)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	log.Println("Copied source object /my-sourcebucketname/my-sourceobjectname to destination /my-bucketname/my-objectname Successfully.")
+
+	log.Printf("Copied %s, successfully to %s - UploadInfo %v\n", dst, src, ui)
 }
