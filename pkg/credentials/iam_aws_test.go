@@ -135,6 +135,9 @@ func TestIAMMalformedEndpoint(t *testing.T) {
 	if err == nil {
 		t.Fatal("Unexpected should fail here")
 	}
+	if err.Error() != `parse %%%%: invalid URL escape "%%%"` {
+		t.Fatalf("Expected parse %%%%%%%%: invalid URL escape \"%%%%%%\", got %s", err)
+	}
 }
 
 func TestIAMFailServer(t *testing.T) {

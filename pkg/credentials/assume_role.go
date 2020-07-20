@@ -29,7 +29,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minio/minio-go/v7/pkg/signer"
+	"github.com/minio/minio-go/v6/pkg/signer"
 	sha256 "github.com/minio/sha256-simd"
 )
 
@@ -170,7 +170,7 @@ func getAssumeRoleCredentials(clnt *http.Client, endpoint string, opts STSAssume
 	}
 	postBody.Seek(0, 0)
 
-	req, err := http.NewRequest(http.MethodPost, u.String(), postBody)
+	req, err := http.NewRequest("POST", u.String(), postBody)
 	if err != nil {
 		return AssumeRoleResponse{}, err
 	}

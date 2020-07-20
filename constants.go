@@ -73,9 +73,4 @@ const (
 	amzLockMode         = "X-Amz-Object-Lock-Mode"
 	amzLockRetainUntil  = "X-Amz-Object-Lock-Retain-Until-Date"
 	amzBypassGovernance = "X-Amz-Bypass-Governance-Retention"
-
-	// Replication status
-	amzBucketReplicationStatus = "X-Amz-Replication-Status"
-	// Minio specific Replication extension
-	minIOBucketReplicationSourceMTime = "X-Minio-Source-Mtime"
 )

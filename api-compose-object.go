@@ -28,15 +28,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/minio/minio-go/v7/pkg/encrypt"
-	"github.com/minio/minio-go/v7/pkg/s3utils"
+	"github.com/minio/minio-go/v6/pkg/encrypt"
+	"github.com/minio/minio-go/v6/pkg/s3utils"
 )
 
-// CopyDestOptions represents options specified by user for CopyObject/ComposeObject APIs
-type CopyDestOptions struct {
-	Bucket string // points to destination bucket
-	Object string // points to destination object
+// DestinationInfo - type with information about the object to be
+// created via server-side copy requests, using the Compose API.
+type DestinationInfo struct {
+	bucket, object string
+	opts           DestInfoOptions
+}
 
+// DestInfoOptions represents options specified by user for NewDestinationInfo call
+type DestInfoOptions struct {
 	// `Encryption` is the key info for server-side-encryption with customer
 	// provided key. If it is nil, no encryption is performed.
 	Encryption encrypt.ServerSide
@@ -49,13 +53,7 @@ type CopyDestOptions struct {
 	// if no user-metadata is provided, it is copied from source
 	// (when there is only once source object in the compose
 	// request)
-	UserMetadata map[string]string
-	// UserMetadata is only set to destination if ReplaceMetadata is true
-	// other value is UserMetadata is ignored and we preserve src.UserMetadata
-	// NOTE: if you set this value to true and now metadata is present
-	// in UserMetadata your destination object will not have any metadata
-	// set.
-	ReplaceMetadata bool
+	UserMeta map[string]string
 
 	// `userTags` is the user defined object tags to be set on destination.
 	// This will be set only if the `replaceTags` field is set to true.
@@ -69,134 +67,212 @@ type CopyDestOptions struct {
 	// Object Retention related fields
 	Mode            RetentionMode
 	RetainUntilDate time.Time
-
-	Size int64 // Needs to be specified if progress bar is specified.
-	// Progress of the entire copy operation will be sent here.
-	Progress io.Reader
 }
 
 // Process custom-metadata to remove a `x-amz-meta-` prefix if
 // present and validate that keys are distinct (after this
 // prefix removal).
-func filterCustomMeta(userMeta map[string]string) map[string]string {
+func filterCustomMeta(userMeta map[string]string) (map[string]string, error) {
 	m := make(map[string]string)
 	for k, v := range userMeta {
 		if strings.HasPrefix(strings.ToLower(k), "x-amz-meta-") {
 			k = k[len("x-amz-meta-"):]
 		}
 		if _, ok := m[k]; ok {
-			continue
+			return nil, ErrInvalidArgument(fmt.Sprintf("Cannot add both %s and x-amz-meta-%s keys as custom metadata", k, k))
 		}
 		m[k] = v
 	}
-	return m
+	return m, nil
 }
 
-// Marshal converts all the CopyDestOptions into their
-// equivalent HTTP header representation
-func (opts CopyDestOptions) Marshal(header http.Header) {
-	const replaceDirective = "REPLACE"
-	if opts.ReplaceTags {
-		header.Set(amzTaggingHeaderDirective, replaceDirective)
-		if tags := s3utils.TagEncode(opts.UserTags); tags != "" {
-			header.Set(amzTaggingHeader, tags)
+// NewDestinationInfo - creates a compose-object/copy-source
+// destination info object.
+//
+// `sse` is the key info for server-side-encryption with customer
+// provided key. If it is nil, no encryption is performed.
+//
+// `userMeta` is the user-metadata key-value pairs to be set on the
+// destination. The keys are automatically prefixed with `x-amz-meta-`
+// if needed. If nil is passed, and if only a single source (of any
+// size) is provided in the ComposeObject call, then metadata from the
+// source is copied to the destination.
+func NewDestinationInfo(bucket, object string, sse encrypt.ServerSide, userMeta map[string]string) (d DestinationInfo, err error) {
+	// Input validation.
+	if err = s3utils.CheckValidBucketName(bucket); err != nil {
+		return d, err
+	}
+	if err = s3utils.CheckValidObjectName(object); err != nil {
+		return d, err
+	}
+	m, err := filterCustomMeta(userMeta)
+	if err != nil {
+		return d, err
+	}
+	opts := DestInfoOptions{
+		Encryption:  sse,
+		UserMeta:    m,
+		UserTags:    nil,
+		ReplaceTags: false,
+		LegalHold:   LegalHoldStatus(""),
+		Mode:        RetentionMode(""),
+	}
+	return DestinationInfo{
+		bucket: bucket,
+		object: object,
+		opts:   opts,
+	}, nil
+}
+
+// NewDestinationInfoWithOptions - creates a compose-object/copy-source
+// destination info object.
+func NewDestinationInfoWithOptions(bucket, object string, destOpts DestInfoOptions) (d DestinationInfo, err error) {
+	// Input validation.
+	if err = s3utils.CheckValidBucketName(bucket); err != nil {
+		return d, err
+	}
+	if err = s3utils.CheckValidObjectName(object); err != nil {
+		return d, err
+	}
+	destOpts.UserMeta, err = filterCustomMeta(destOpts.UserMeta)
+	if err != nil {
+		return d, err
+	}
+	return DestinationInfo{
+		bucket: bucket,
+		object: object,
+		opts:   destOpts,
+	}, nil
+}
+
+// getUserMetaHeadersMap - construct appropriate key-value pairs to send
+// as headers from metadata map to pass into copy-object request. For
+// single part copy-object (i.e. non-multipart object), enable the
+// withCopyDirectiveHeader to set the `x-amz-metadata-directive` to
+// `REPLACE`, so that metadata headers from the source are not copied
+// over.
+func (d *DestinationInfo) getUserMetaHeadersMap(withCopyDirectiveHeader bool) map[string]string {
+	if len(d.opts.UserMeta) == 0 {
+		return nil
+	}
+	r := make(map[string]string)
+	if withCopyDirectiveHeader {
+		r["x-amz-metadata-directive"] = "REPLACE"
+	}
+	for k, v := range d.opts.UserMeta {
+		if isAmzHeader(k) || isStandardHeader(k) || isStorageClassHeader(k) {
+			r[k] = v
+		} else {
+			r["x-amz-meta-"+k] = v
 		}
 	}
+	return r
+}
 
-	if opts.LegalHold != LegalHoldStatus("") {
-		header.Set(amzLegalHoldHeader, opts.LegalHold.String())
+// SourceInfo - represents a source object to be copied, using
+// server-side copying APIs.
+type SourceInfo struct {
+	bucket, object string
+	start, end     int64
+	encryption     encrypt.ServerSide
+	// Headers to send with the upload-part-copy request involving
+	// this source object.
+	Headers http.Header
+}
+
+// NewSourceInfo - create a compose-object/copy-object source info
+// object.
+//
+// `decryptSSEC` is the decryption key using server-side-encryption
+// with customer provided key. It may be nil if the source is not
+// encrypted.
+func NewSourceInfo(bucket, object string, sse encrypt.ServerSide) SourceInfo {
+	r := SourceInfo{
+		bucket:     bucket,
+		object:     object,
+		start:      -1, // range is unspecified by default
+		encryption: sse,
+		Headers:    make(http.Header),
 	}
 
-	if opts.Mode != RetentionMode("") && !opts.RetainUntilDate.IsZero() {
-		header.Set(amzLockMode, opts.Mode.String())
-		header.Set(amzLockRetainUntil, opts.RetainUntilDate.Format(time.RFC3339))
-	}
+	// Set the source header
+	r.Headers.Set("x-amz-copy-source", s3utils.EncodePath(bucket+"/"+object))
+	return r
+}
 
-	if opts.Encryption != nil {
-		opts.Encryption.Marshal(header)
+// SetRange - Set the start and end offset of the source object to be
+// copied. If this method is not called, the whole source object is
+// copied.
+func (s *SourceInfo) SetRange(start, end int64) error {
+	if start > end || start < 0 {
+		return ErrInvalidArgument("start must be non-negative, and start must be at most end.")
 	}
+	// Note that 0 <= start <= end
+	s.start, s.end = start, end
+	return nil
+}
 
-	if opts.ReplaceMetadata {
-		header.Set("x-amz-metadata-directive", replaceDirective)
-		for k, v := range filterCustomMeta(opts.UserMetadata) {
-			if isAmzHeader(k) || isStandardHeader(k) || isStorageClassHeader(k) {
-				header.Set(k, v)
-			} else {
-				header.Set("x-amz-meta-"+k, v)
+// SetMatchETagCond - Set ETag match condition. The object is copied
+// only if the etag of the source matches the value given here.
+func (s *SourceInfo) SetMatchETagCond(etag string) error {
+	if etag == "" {
+		return ErrInvalidArgument("ETag cannot be empty.")
+	}
+	s.Headers.Set("x-amz-copy-source-if-match", etag)
+	return nil
+}
+
+// SetMatchETagExceptCond - Set the ETag match exception
+// condition. The object is copied only if the etag of the source is
+// not the value given here.
+func (s *SourceInfo) SetMatchETagExceptCond(etag string) error {
+	if etag == "" {
+		return ErrInvalidArgument("ETag cannot be empty.")
+	}
+	s.Headers.Set("x-amz-copy-source-if-none-match", etag)
+	return nil
+}
+
+// SetModifiedSinceCond - Set the modified since condition.
+func (s *SourceInfo) SetModifiedSinceCond(modTime time.Time) error {
+	if modTime.IsZero() {
+		return ErrInvalidArgument("Input time cannot be 0.")
+	}
+	s.Headers.Set("x-amz-copy-source-if-modified-since", modTime.Format(http.TimeFormat))
+	return nil
+}
+
+// SetUnmodifiedSinceCond - Set the unmodified since condition.
+func (s *SourceInfo) SetUnmodifiedSinceCond(modTime time.Time) error {
+	if modTime.IsZero() {
+		return ErrInvalidArgument("Input time cannot be 0.")
+	}
+	s.Headers.Set("x-amz-copy-source-if-unmodified-since", modTime.Format(http.TimeFormat))
+	return nil
+}
+
+// Helper to fetch size and etag of an object using a StatObject call.
+func (s *SourceInfo) getProps(c Client) (size int64, etag string, userMeta map[string]string, err error) {
+	// Get object info - need size and etag here. Also, decryption
+	// headers are added to the stat request if given.
+	var objInfo ObjectInfo
+	opts := StatObjectOptions{GetObjectOptions{ServerSideEncryption: encrypt.SSE(s.encryption)}}
+	objInfo, err = c.statObject(context.Background(), s.bucket, s.object, opts)
+	if err != nil {
+		err = ErrInvalidArgument(fmt.Sprintf("Could not stat object - %s/%s: %v", s.bucket, s.object, err))
+	} else {
+		size = objInfo.Size
+		etag = objInfo.ETag
+		userMeta = make(map[string]string)
+		for k, v := range objInfo.Metadata {
+			if strings.HasPrefix(k, "x-amz-meta-") {
+				if len(v) > 0 {
+					userMeta[k] = v[0]
+				}
 			}
 		}
 	}
-}
-
-// toDestinationInfo returns a validated copyOptions object.
-func (opts CopyDestOptions) validate() (err error) {
-	// Input validation.
-	if err = s3utils.CheckValidBucketName(opts.Bucket); err != nil {
-		return err
-	}
-	if err = s3utils.CheckValidObjectName(opts.Object); err != nil {
-		return err
-	}
-	if opts.Progress != nil && opts.Size < 0 {
-		return errInvalidArgument("For progress bar effective size needs to be specified")
-	}
-	return nil
-}
-
-// CopySrcOptions represents a source object to be copied, using
-// server-side copying APIs.
-type CopySrcOptions struct {
-	Bucket, Object       string
-	VersionID            string
-	MatchETag            string
-	NoMatchETag          string
-	MatchModifiedSince   time.Time
-	MatchUnmodifiedSince time.Time
-	MatchRange           bool
-	Start, End           int64
-	Encryption           encrypt.ServerSide
-}
-
-// Marshal converts all the CopySrcOptions into their
-// equivalent HTTP header representation
-func (opts CopySrcOptions) Marshal(header http.Header) {
-	// Set the source header
-	header.Set("x-amz-copy-source", s3utils.EncodePath(opts.Bucket+"/"+opts.Object))
-	if opts.VersionID != "" {
-		header.Set("x-amz-copy-source", s3utils.EncodePath(opts.Bucket+"/"+opts.Object)+"?versionId="+opts.VersionID)
-	}
-
-	if opts.MatchETag != "" {
-		header.Set("x-amz-copy-source-if-match", opts.MatchETag)
-	}
-	if opts.NoMatchETag != "" {
-		header.Set("x-amz-copy-source-if-none-match", opts.NoMatchETag)
-	}
-
-	if !opts.MatchModifiedSince.IsZero() {
-		header.Set("x-amz-copy-source-if-modified-since", opts.MatchModifiedSince.Format(http.TimeFormat))
-	}
-	if !opts.MatchUnmodifiedSince.IsZero() {
-		header.Set("x-amz-copy-source-if-unmodified-since", opts.MatchUnmodifiedSince.Format(http.TimeFormat))
-	}
-
-	if opts.Encryption != nil {
-		encrypt.SSECopy(opts.Encryption).Marshal(header)
-	}
-}
-
-func (opts CopySrcOptions) validate() (err error) {
-	// Input validation.
-	if err = s3utils.CheckValidBucketName(opts.Bucket); err != nil {
-		return err
-	}
-	if err = s3utils.CheckValidObjectName(opts.Object); err != nil {
-		return err
-	}
-	if opts.Start > opts.End || opts.Start < 0 {
-		return errInvalidArgument("start must be non-negative, and start must be at most end.")
-	}
-	return nil
+	return
 }
 
 // Low level implementation of CopyObject API, supports only upto 5GiB worth of copy.
@@ -215,7 +291,7 @@ func (c Client) copyObjectDo(ctx context.Context, srcBucket, srcObject, destBuck
 	headers.Set("x-amz-copy-source", s3utils.EncodePath(srcBucket+"/"+srcObject))
 
 	// Send upload-part-copy request
-	resp, err := c.executeMethod(ctx, http.MethodPut, requestMetadata{
+	resp, err := c.executeMethod(ctx, "PUT", requestMetadata{
 		bucketName:   destBucket,
 		objectName:   destObject,
 		customHeader: headers,
@@ -253,7 +329,7 @@ func (c Client) copyObjectPartDo(ctx context.Context, srcBucket, srcObject, dest
 	headers.Set("x-amz-copy-source", s3utils.EncodePath(srcBucket+"/"+srcObject))
 
 	if startOffset < 0 {
-		return p, errInvalidArgument("startOffset must be non-negative")
+		return p, ErrInvalidArgument("startOffset must be non-negative")
 	}
 
 	if length >= 0 {
@@ -268,7 +344,7 @@ func (c Client) copyObjectPartDo(ctx context.Context, srcBucket, srcObject, dest
 	queryValues.Set("partNumber", strconv.Itoa(partID))
 	queryValues.Set("uploadId", uploadID)
 
-	resp, err := c.executeMethod(ctx, http.MethodPut, requestMetadata{
+	resp, err := c.executeMethod(ctx, "PUT", requestMetadata{
 		bucketName:   destBucket,
 		objectName:   destObject,
 		customHeader: headers,
@@ -306,7 +382,7 @@ func (c Client) uploadPartCopy(ctx context.Context, bucket, object, uploadID str
 	urlValues.Set("uploadId", uploadID)
 
 	// Send upload-part-copy request
-	resp, err := c.executeMethod(ctx, http.MethodPut, requestMetadata{
+	resp, err := c.executeMethod(ctx, "PUT", requestMetadata{
 		bucketName:   bucket,
 		objectName:   object,
 		customHeader: headers,
@@ -332,72 +408,68 @@ func (c Client) uploadPartCopy(ctx context.Context, bucket, object, uploadID str
 	return p, nil
 }
 
-// ComposeObject - creates an object using server-side copying
-// of existing objects. It takes a list of source objects (with optional offsets)
-// and concatenates them into a new object using only server-side copying
-// operations. Optionally takes progress reader hook for applications to
-// look at current progress.
-func (c Client) ComposeObject(ctx context.Context, dst CopyDestOptions, srcs ...CopySrcOptions) (UploadInfo, error) {
+// ComposeObjectWithProgress - creates an object using server-side copying of
+// existing objects. It takes a list of source objects (with optional
+// offsets) and concatenates them into a new object using only
+// server-side copying operations. Optionally takes progress reader hook
+// for applications to look at current progress.
+func (c Client) ComposeObjectWithProgress(dst DestinationInfo, srcs []SourceInfo, progress io.Reader) error {
 	if len(srcs) < 1 || len(srcs) > maxPartsCount {
-		return UploadInfo{}, errInvalidArgument("There must be as least one and up to 10000 source objects.")
+		return ErrInvalidArgument("There must be as least one and up to 10000 source objects.")
 	}
-
-	for _, src := range srcs {
-		if err := src.validate(); err != nil {
-			return UploadInfo{}, err
-		}
-	}
-
-	if err := dst.validate(); err != nil {
-		return UploadInfo{}, err
-	}
-
-	srcObjectInfos := make([]ObjectInfo, len(srcs))
-	srcObjectSizes := make([]int64, len(srcs))
-	var totalSize, totalParts int64
+	ctx := context.Background()
+	srcSizes := make([]int64, len(srcs))
+	var totalSize, size, totalParts int64
+	var srcUserMeta map[string]string
+	etags := make([]string, len(srcs))
 	var err error
 	for i, src := range srcs {
-		opts := StatObjectOptions{ServerSideEncryption: encrypt.SSE(src.Encryption), VersionID: src.VersionID}
-		srcObjectInfos[i], err = c.statObject(context.Background(), src.Bucket, src.Object, opts)
+		size, etags[i], srcUserMeta, err = src.getProps(c)
 		if err != nil {
-			return UploadInfo{}, err
+			return err
 		}
 
-		srcCopySize := srcObjectInfos[i].Size
+		// Error out if client side encryption is used in this source object when
+		// more than one source objects are given.
+		if len(srcs) > 1 && src.Headers.Get("x-amz-meta-x-amz-key") != "" {
+			return ErrInvalidArgument(
+				fmt.Sprintf("Client side encryption is used in source object %s/%s", src.bucket, src.object))
+		}
+
 		// Check if a segment is specified, and if so, is the
 		// segment within object bounds?
-		if src.MatchRange {
+		if src.start != -1 {
 			// Since range is specified,
 			//    0 <= src.start <= src.end
 			// so only invalid case to check is:
-			if src.End >= srcCopySize || src.Start < 0 {
-				return UploadInfo{}, errInvalidArgument(
-					fmt.Sprintf("CopySrcOptions %d has invalid segment-to-copy [%d, %d] (size is %d)",
-						i, src.Start, src.End, srcCopySize))
+			if src.end >= size {
+				return ErrInvalidArgument(
+					fmt.Sprintf("SourceInfo %d has invalid segment-to-copy [%d, %d] (size is %d)",
+						i, src.start, src.end, size))
 			}
-			srcCopySize = src.End - src.Start + 1
+			size = src.end - src.start + 1
 		}
 
 		// Only the last source may be less than `absMinPartSize`
-		if srcCopySize < absMinPartSize && i < len(srcs)-1 {
-			return UploadInfo{}, errInvalidArgument(
-				fmt.Sprintf("CopySrcOptions %d is too small (%d) and it is not the last part", i, srcCopySize))
+		if size < absMinPartSize && i < len(srcs)-1 {
+			return ErrInvalidArgument(
+				fmt.Sprintf("SourceInfo %d is too small (%d) and it is not the last part", i, size))
 		}
 
 		// Is data to copy too large?
-		totalSize += srcCopySize
+		totalSize += size
 		if totalSize > maxMultipartPutObjectSize {
-			return UploadInfo{}, errInvalidArgument(fmt.Sprintf("Cannot compose an object of size %d (> 5TiB)", totalSize))
+			return ErrInvalidArgument(fmt.Sprintf("Cannot compose an object of size %d (> 5TiB)", totalSize))
 		}
 
 		// record source size
-		srcObjectSizes[i] = srcCopySize
+		srcSizes[i] = size
 
 		// calculate parts needed for current source
-		totalParts += partsRequired(srcCopySize)
+		totalParts += partsRequired(size)
 		// Do we need more parts than we are allowed?
 		if totalParts > maxPartsCount {
-			return UploadInfo{}, errInvalidArgument(fmt.Sprintf(
+			return ErrInvalidArgument(fmt.Sprintf(
 				"Your proposed compose object requires more than %d parts", maxPartsCount))
 		}
 	}
@@ -405,8 +477,8 @@ func (c Client) ComposeObject(ctx context.Context, dst CopyDestOptions, srcs ...
 	// Single source object case (i.e. when only one source is
 	// involved, it is being copied wholly and at most 5GiB in
 	// size, emptyfiles are also supported).
-	if (totalParts == 1 && srcs[0].Start == -1 && totalSize <= maxPartSize) || (totalSize == 0) {
-		return c.CopyObject(ctx, dst, srcs[0])
+	if (totalParts == 1 && srcs[0].start == -1 && totalSize <= maxPartSize) || (totalSize == 0) {
+		return c.CopyObjectWithProgress(dst, srcs[0], progress)
 	}
 
 	// Now, handle multipart-copy cases.
@@ -414,7 +486,9 @@ func (c Client) ComposeObject(ctx context.Context, dst CopyDestOptions, srcs ...
 	// 1. Ensure that the object has not been changed while
 	//    we are copying data.
 	for i, src := range srcs {
-		src.MatchETag = srcObjectInfos[i].ETag
+		if src.Headers.Get("x-amz-copy-source-if-match") == "" {
+			src.SetMatchETagCond(etags[i])
+		}
 	}
 
 	// 2. Initiate a new multipart upload.
@@ -422,45 +496,37 @@ func (c Client) ComposeObject(ctx context.Context, dst CopyDestOptions, srcs ...
 	// Set user-metadata on the destination object. If no
 	// user-metadata is specified, and there is only one source,
 	// (only) then metadata from source is copied.
-	var userMeta map[string]string
-	if dst.ReplaceMetadata {
-		userMeta = dst.UserMetadata
-	} else {
-		userMeta = srcObjectInfos[0].UserMetadata
+	userMeta := dst.getUserMetaHeadersMap(false)
+	metaMap := userMeta
+	if len(userMeta) == 0 && len(srcs) == 1 {
+		metaMap = srcUserMeta
+	}
+	metaHeaders := make(map[string]string)
+	for k, v := range metaMap {
+		metaHeaders[k] = v
 	}
 
-	var userTags map[string]string
-	if dst.ReplaceTags {
-		userTags = dst.UserTags
-	} else {
-		userTags = srcObjectInfos[0].UserTags
-	}
-
-	uploadID, err := c.newUploadID(ctx, dst.Bucket, dst.Object, PutObjectOptions{
-		ServerSideEncryption: dst.Encryption,
-		UserMetadata:         userMeta,
-		UserTags:             userTags,
-		Mode:                 dst.Mode,
-		RetainUntilDate:      dst.RetainUntilDate,
-		LegalHold:            dst.LegalHold,
-	})
+	uploadID, err := c.newUploadID(ctx, dst.bucket, dst.object, PutObjectOptions{ServerSideEncryption: dst.opts.Encryption, UserMetadata: metaHeaders})
 	if err != nil {
-		return UploadInfo{}, err
+		return err
 	}
 
 	// 3. Perform copy part uploads
 	objParts := []CompletePart{}
 	partIndex := 1
 	for i, src := range srcs {
-		var h = make(http.Header)
-		src.Marshal(h)
-		if dst.Encryption != nil {
-			dst.Encryption.Marshal(h)
+		h := src.Headers
+		if src.encryption != nil {
+			encrypt.SSECopy(src.encryption).Marshal(h)
+		}
+		// Add destination encryption headers
+		if dst.opts.Encryption != nil {
+			dst.opts.Encryption.Marshal(h)
 		}
 
 		// calculate start/end indices of parts after
 		// splitting.
-		startIdx, endIdx := calculateEvenSplits(srcObjectSizes[i], src)
+		startIdx, endIdx := calculateEvenSplits(srcSizes[i], src)
 		for j, start := range startIdx {
 			end := endIdx[j]
 
@@ -470,13 +536,13 @@ func (c Client) ComposeObject(ctx context.Context, dst CopyDestOptions, srcs ...
 				fmt.Sprintf("bytes=%d-%d", start, end))
 
 			// make upload-part-copy request
-			complPart, err := c.uploadPartCopy(ctx, dst.Bucket,
-				dst.Object, uploadID, partIndex, h)
+			complPart, err := c.uploadPartCopy(ctx, dst.bucket,
+				dst.object, uploadID, partIndex, h)
 			if err != nil {
-				return UploadInfo{}, err
+				return err
 			}
-			if dst.Progress != nil {
-				io.CopyN(ioutil.Discard, dst.Progress, end-start+1)
+			if progress != nil {
+				io.CopyN(ioutil.Discard, progress, end-start+1)
 			}
 			objParts = append(objParts, complPart)
 			partIndex++
@@ -484,14 +550,20 @@ func (c Client) ComposeObject(ctx context.Context, dst CopyDestOptions, srcs ...
 	}
 
 	// 4. Make final complete-multipart request.
-	uploadInfo, err := c.completeMultipartUpload(ctx, dst.Bucket, dst.Object, uploadID,
+	_, err = c.completeMultipartUpload(ctx, dst.bucket, dst.object, uploadID,
 		completeMultipartUpload{Parts: objParts})
 	if err != nil {
-		return UploadInfo{}, err
+		return err
 	}
+	return nil
+}
 
-	uploadInfo.Size = totalSize
-	return uploadInfo, nil
+// ComposeObject - creates an object using server-side copying of
+// existing objects. It takes a list of source objects (with optional
+// offsets) and concatenates them into a new object using only
+// server-side copying operations.
+func (c Client) ComposeObject(dst DestinationInfo, srcs []SourceInfo) error {
+	return c.ComposeObjectWithProgress(dst, srcs, nil)
 }
 
 // partsRequired is maximum parts possible with
@@ -509,7 +581,7 @@ func partsRequired(size int64) int64 {
 // start and end index slices. Splits happen evenly to be sure that no
 // part is less than 5MiB, as that could fail the multipart request if
 // it is not the last part.
-func calculateEvenSplits(size int64, src CopySrcOptions) (startIndex, endIndex []int64) {
+func calculateEvenSplits(size int64, src SourceInfo) (startIndex, endIndex []int64) {
 	if size == 0 {
 		return
 	}
@@ -530,7 +602,7 @@ func calculateEvenSplits(size int64, src CopySrcOptions) (startIndex, endIndex [
 	// size = q * k + r (by simple division of size by k,
 	// so that 0 <= r < k)
 	//
-	start := src.Start
+	start := src.start
 	if start == -1 {
 		start = 0
 	}

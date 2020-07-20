@@ -17,7 +17,7 @@
 
 package policy
 
-import "github.com/minio/minio-go/v7/pkg/set"
+import "github.com/minio/minio-go/v6/pkg/set"
 
 // ConditionKeyMap - map of policy condition key and value.
 type ConditionKeyMap map[string]set.StringSet
@@ -46,7 +46,9 @@ func (ckm ConditionKeyMap) Remove(key string, value set.StringSet) {
 
 // RemoveKey - removes key and its value.
 func (ckm ConditionKeyMap) RemoveKey(key string) {
-	delete(ckm, key)
+	if _, ok := ckm[key]; ok {
+		delete(ckm, key)
+	}
 }
 
 // CopyConditionKeyMap - returns new copy of given ConditionKeyMap.
@@ -89,7 +91,9 @@ func (cond ConditionMap) Add(condKey string, condKeyMap ConditionKeyMap) {
 
 // Remove - removes condition key and its value.
 func (cond ConditionMap) Remove(condKey string) {
-	delete(cond, condKey)
+	if _, ok := cond[condKey]; ok {
+		delete(cond, condKey)
+	}
 }
 
 // mergeConditionMap - returns new ConditionMap which contains merged key/value of two ConditionMap.

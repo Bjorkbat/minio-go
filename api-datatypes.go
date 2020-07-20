@@ -1,6 +1,6 @@
 /*
  * MinIO Go Library for Amazon S3 Compatible Cloud Storage
- * Copyright 2015-2020 MinIO, Inc.
+ * Copyright 2015-2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ type StringMap map[string]string
 //
 // The fact this function is on the pointer of Map is important, so that
 // if m is nil it can be initialized, which is often the case if m is
-// nested in another xml structural. This is also why the first thing done
+// nested in another xml structurel. This is also why the first thing done
 // on the first line is initialize it.
 func (m *StringMap) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 	*m = StringMap{}
@@ -60,25 +60,6 @@ func (m *StringMap) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
 		(*m)[e.XMLName.Local] = e.Value
 	}
 	return nil
-}
-
-// Owner name.
-type Owner struct {
-	DisplayName string `json:"name"`
-	ID          string `json:"id"`
-}
-
-// UploadInfo contains information about the
-// newly uploaded or copied object.
-type UploadInfo struct {
-	Bucket       string
-	Key          string
-	ETag         string
-	Size         int64
-	LastModified time.Time
-	Expiration   time.Time
-	Location     string
-	VersionID    string
 }
 
 // ObjectInfo container for object metadata.
@@ -105,7 +86,10 @@ type ObjectInfo struct {
 	UserTags map[string]string `json:"userTags"`
 
 	// Owner name.
-	Owner Owner
+	Owner struct {
+		DisplayName string `json:"name"`
+		ID          string `json:"id"`
+	} `json:"owner"`
 
 	// ACL grant.
 	Grant []struct {
@@ -119,11 +103,6 @@ type ObjectInfo struct {
 
 	// The class of storage used to store the object.
 	StorageClass string `json:"storageClass"`
-
-	// Versioning related information
-	IsLatest       bool
-	IsDeleteMarker bool
-	VersionID      string `xml:"VersionId"`
 
 	// Error
 	Err error `json:"-"`

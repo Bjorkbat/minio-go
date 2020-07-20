@@ -20,11 +20,9 @@
 package main
 
 import (
-	"context"
 	"log"
 
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v6"
 )
 
 func main() {
@@ -36,22 +34,25 @@ func main() {
 
 	// New returns an Amazon S3 compatible client object. API compatibility (v2 or v4) is automatically
 	// determined based on the Endpoint value.
-	minioClient, err := minio.New("play.min.io", &minio.Options{
-		Creds:  credentials.NewStaticV4("YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", ""),
-		Secure: true,
-	})
+	minioClient, err := minio.New("play.min.io", "YOUR-ACCESS", "YOUR-SECRET", true)
 	if err != nil {
 		log.Fatalln(err)
 	}
 
 	// s3Client.TraceOn(os.Stderr)
 
+	// Create a done channel to control 'ListenBucketNotification' go routine.
+	doneCh := make(chan struct{})
+
+	// Indicate to our routine to exit cleanly upon return.
+	defer close(doneCh)
+
 	// Listen for bucket notifications on "mybucket" filtered by prefix, suffix and events.
-	for notificationInfo := range minioClient.ListenBucketNotification(context.Background(), "YOUR-BUCKET", "PREFIX", "SUFFIX", []string{
+	for notificationInfo := range minioClient.ListenBucketNotification("YOUR-BUCKET", "PREFIX", "SUFFIX", []string{
 		"s3:ObjectCreated:*",
 		"s3:ObjectAccessed:*",
 		"s3:ObjectRemoved:*",
-	}) {
+	}, doneCh) {
 		if notificationInfo.Err != nil {
 			log.Fatalln(notificationInfo.Err)
 		}

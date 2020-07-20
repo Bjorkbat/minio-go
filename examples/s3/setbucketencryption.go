@@ -20,12 +20,9 @@
 package main
 
 import (
-	"context"
 	"log"
 
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/minio/minio-go/v7/pkg/sse"
+	"github.com/minio/minio-go/v6"
 )
 
 func main() {
@@ -37,10 +34,7 @@ func main() {
 
 	// New returns an Amazon S3 compatible client object. API compatibility (v2 or v4) is automatically
 	// determined based on the Endpoint value.
-	s3Client, err := minio.New("s3.amazonaws.com", &minio.Options{
-		Creds:  credentials.NewStaticV4("YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", ""),
-		Secure: true,
-	})
+	s3Client, err := minio.New("s3.amazonaws.com", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -48,7 +42,16 @@ func main() {
 	// s3Client.TraceOn(os.Stderr)
 
 	// Set default encryption configuration on a bucket
-	err = s3Client.SetBucketEncryption(context.Background(), "my-bucketname", sse.NewConfigurationSSES3())
+	config := minio.ServerSideEncryptionConfiguration{Rules: []minio.Rule{
+		{
+			Apply: minio.ApplyServerSideEncryptionByDefault{
+				SSEAlgorithm: "AES256",
+				// KmsMasterKeyID: "my-masterkey",
+				// SSEAlgorithm:   "aws:kms",
+			},
+		},
+	}}
+	err = s3Client.SetBucketEncryption("my-bucketname", config)
 	if err != nil {
 		log.Fatalln(err)
 	}

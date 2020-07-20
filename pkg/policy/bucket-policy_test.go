@@ -18,11 +18,12 @@
 package policy
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"testing"
 
-	"github.com/minio/minio-go/v7/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 )
 
 // TestUnmarshalBucketPolicy tests unmarsheling various examples

@@ -20,12 +20,9 @@
 package main
 
 import (
-	"context"
 	"log"
 
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
-	"github.com/minio/minio-go/v7/pkg/notification"
+	"github.com/minio/minio-go/v6"
 )
 
 func main() {
@@ -37,10 +34,7 @@ func main() {
 
 	// New returns an Amazon S3 compatible client object. API compatibility (v2 or v4) is automatically
 	// determined based on the Endpoint value.
-	s3Client, err := minio.New("s3.amazonaws.com", &minio.Options{
-		Creds:  credentials.NewStaticV4("YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", ""),
-		Secure: true,
-	})
+	s3Client, err := minio.New("s3.amazonaws.com", "YOUR-ACCESSKEYID", "YOUR-SECRETACCESSKEY", true)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -61,30 +55,30 @@ func main() {
 	// with actual values that you receive from the S3 provider
 
 	// Here you create a new Topic notification
-	topicArn := notification.NewArn("YOUR-PROVIDER", "YOUR-SERVICE", "YOUR-REGION", "YOUR-ACCOUNT-ID", "YOUR-RESOURCE")
-	topicConfig := notification.NewConfig(topicArn)
+	topicArn := minio.NewArn("YOUR-PROVIDER", "YOUR-SERVICE", "YOUR-REGION", "YOUR-ACCOUNT-ID", "YOUR-RESOURCE")
+	topicConfig := minio.NewNotificationConfig(topicArn)
 	topicConfig.AddEvents(minio.ObjectCreatedAll, minio.ObjectRemovedAll)
 	topicConfig.AddFilterPrefix("photos/")
 	topicConfig.AddFilterSuffix(".jpg")
 
 	// Create a new Queue notification
-	queueArn := notification.NewArn("YOUR-PROVIDER", "YOUR-SERVICE", "YOUR-REGION", "YOUR-ACCOUNT-ID", "YOUR-RESOURCE")
-	queueConfig := notification.NewConfig(queueArn)
+	queueArn := minio.NewArn("YOUR-PROVIDER", "YOUR-SERVICE", "YOUR-REGION", "YOUR-ACCOUNT-ID", "YOUR-RESOURCE")
+	queueConfig := minio.NewNotificationConfig(queueArn)
 	queueConfig.AddEvents(minio.ObjectRemovedAll)
 
 	// Create a new Lambda (CloudFunction)
-	lambdaArn := notification.NewArn("YOUR-PROVIDER", "YOUR-SERVICE", "YOUR-REGION", "YOUR-ACCOUNT-ID", "YOUR-RESOURCE")
-	lambdaConfig := notification.NewConfig(lambdaArn)
+	lambdaArn := minio.NewArn("YOUR-PROVIDER", "YOUR-SERVICE", "YOUR-REGION", "YOUR-ACCOUNT-ID", "YOUR-RESOURCE")
+	lambdaConfig := minio.NewNotificationConfig(lambdaArn)
 	lambdaConfig.AddEvents(minio.ObjectRemovedAll)
 	lambdaConfig.AddFilterSuffix(".swp")
 
 	// Now, set all previously created notification configs
-	config := &notification.Configuration{}
-	config.AddTopic(topicConfig)
-	config.AddQueue(queueConfig)
-	config.AddLambda(lambdaConfig)
+	bucketNotification := minio.BucketNotification{}
+	bucketNotification.AddTopic(topicConfig)
+	bucketNotification.AddQueue(queueConfig)
+	bucketNotification.AddLambda(lambdaConfig)
 
-	err = s3Client.SetBucketNotification(context.Background(), "YOUR-BUCKET", config)
+	err = s3Client.SetBucketNotification("YOUR-BUCKET", bucketNotification)
 	if err != nil {
 		log.Fatalln("Error: " + err.Error())
 	}

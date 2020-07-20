@@ -22,7 +22,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
-	"hash"
 	"io"
 	"io/ioutil"
 	"net"
@@ -31,12 +30,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	md5simd "github.com/minio/md5-simd"
-	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/sha256-simd"
+
+	"github.com/minio/minio-go/v6/pkg/s3utils"
 )
 
 func trimEtag(etag string) string {
@@ -52,16 +50,14 @@ func xmlDecoder(body io.Reader, v interface{}) error {
 
 // sum256 calculate sha256sum for an input byte array, returns hex encoded.
 func sum256Hex(data []byte) string {
-	hash := newSHA256Hasher()
-	defer hash.Close()
+	hash := sha256.New()
 	hash.Write(data)
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // sumMD5Base64 calculate md5sum for an input byte array, returns base64 encoded.
 func sumMD5Base64(data []byte) string {
-	hash := newMd5Hasher()
-	defer hash.Close()
+	hash := md5.New()
 	hash.Write(data)
 	return base64.StdEncoding.EncodeToString(hash.Sum(nil))
 }
@@ -75,12 +71,12 @@ func getEndpointURL(endpoint string, secure bool) (*url.URL, error) {
 		}
 		if !s3utils.IsValidIP(host) && !s3utils.IsValidDomain(host) {
 			msg := "Endpoint: " + endpoint + " does not follow ip address or domain name standards."
-			return nil, errInvalidArgument(msg)
+			return nil, ErrInvalidArgument(msg)
 		}
 	} else {
 		if !s3utils.IsValidIP(endpoint) && !s3utils.IsValidDomain(endpoint) {
 			msg := "Endpoint: " + endpoint + " does not follow ip address or domain name standards."
-			return nil, errInvalidArgument(msg)
+			return nil, ErrInvalidArgument(msg)
 		}
 	}
 	// If secure is false, use 'http' scheme.
@@ -134,19 +130,19 @@ var (
 // Verify if input endpoint URL is valid.
 func isValidEndpointURL(endpointURL url.URL) error {
 	if endpointURL == sentinelURL {
-		return errInvalidArgument("Endpoint url cannot be empty.")
+		return ErrInvalidArgument("Endpoint url cannot be empty.")
 	}
 	if endpointURL.Path != "/" && endpointURL.Path != "" {
-		return errInvalidArgument("Endpoint url cannot have fully qualified paths.")
+		return ErrInvalidArgument("Endpoint url cannot have fully qualified paths.")
 	}
 	if strings.Contains(endpointURL.Host, ".s3.amazonaws.com") {
 		if !s3utils.IsAmazonEndpoint(endpointURL) {
-			return errInvalidArgument("Amazon S3 endpoint should be 's3.amazonaws.com'.")
+			return ErrInvalidArgument("Amazon S3 endpoint should be 's3.amazonaws.com'.")
 		}
 	}
 	if strings.Contains(endpointURL.Host, ".googleapis.com") {
 		if !s3utils.IsGoogleEndpoint(endpointURL) {
-			return errInvalidArgument("Google Cloud Storage endpoint should be 'storage.googleapis.com'.")
+			return ErrInvalidArgument("Google Cloud Storage endpoint should be 'storage.googleapis.com'.")
 		}
 	}
 	return nil
@@ -156,10 +152,10 @@ func isValidEndpointURL(endpointURL url.URL) error {
 func isValidExpiry(expires time.Duration) error {
 	expireSeconds := int64(expires / time.Second)
 	if expireSeconds < 1 {
-		return errInvalidArgument("Expires cannot be lesser than 1 second.")
+		return ErrInvalidArgument("Expires cannot be lesser than 1 second.")
 	}
 	if expireSeconds > 604800 {
-		return errInvalidArgument("Expires cannot be greater than 7 days.")
+		return ErrInvalidArgument("Expires cannot be greater than 7 days.")
 	}
 	return nil
 }
@@ -179,7 +175,6 @@ func extractObjMetadata(header http.Header) http.Header {
 		"X-Amz-Object-Lock-Legal-Hold",
 		"X-Amz-Website-Redirect-Location",
 		"X-Amz-Server-Side-Encryption",
-		"X-Amz-Tagging-Count",
 		"X-Amz-Meta-",
 		// Add new headers to be preserved.
 		// if you add new headers here, please extend
@@ -329,10 +324,8 @@ var supportedHeaders = []string{
 	"content-language",
 	"x-amz-website-redirect-location",
 	"x-amz-object-lock-mode",
-	"x-amz-metadata-directive",
 	"x-amz-object-lock-retain-until-date",
 	"expires",
-	"x-amz-replication-status",
 	// Add more supported headers here.
 }
 
@@ -378,35 +371,4 @@ func isAmzHeader(headerKey string) bool {
 	key := strings.ToLower(headerKey)
 
 	return strings.HasPrefix(key, "x-amz-meta-") || strings.HasPrefix(key, "x-amz-grant-") || key == "x-amz-acl" || isSSEHeader(headerKey)
-}
-
-var md5Pool = sync.Pool{New: func() interface{} { return md5.New() }}
-var sha256Pool = sync.Pool{New: func() interface{} { return sha256.New() }}
-
-func newMd5Hasher() md5simd.Hasher {
-	return hashWrapper{Hash: md5Pool.New().(hash.Hash), isMD5: true}
-}
-
-func newSHA256Hasher() md5simd.Hasher {
-	return hashWrapper{Hash: sha256Pool.New().(hash.Hash), isSHA256: true}
-}
-
-// hashWrapper implements the md5simd.Hasher interface.
-type hashWrapper struct {
-	hash.Hash
-	isMD5    bool
-	isSHA256 bool
-}
-
-// Close will put the hasher back into the pool.
-func (m hashWrapper) Close() {
-	if m.isMD5 && m.Hash != nil {
-		m.Reset()
-		md5Pool.Put(m.Hash)
-	}
-	if m.isSHA256 && m.Hash != nil {
-		m.Reset()
-		sha256Pool.Put(m.Hash)
-	}
-	m.Hash = nil
 }

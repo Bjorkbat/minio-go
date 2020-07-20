@@ -18,12 +18,12 @@
 package policy
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
 
-	jsoniter "github.com/json-iterator/go"
-	"github.com/minio/minio-go/v7/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 )
 
 // BucketPolicy - Bucket level policy.
@@ -88,8 +88,7 @@ type User struct {
 // the reason is that Principal can take a json struct represented by
 // User string but it can also take a string.
 func (u *User) UnmarshalJSON(data []byte) error {
-	// Try to unmarshal data in a struct equal to User,
-	var json = jsoniter.ConfigCompatibleWithStandardLibrary
+	// Try to unmarshal data in a struct equal to User, we need it
 	// to avoid infinite recursive call of this function
 	type AliasUser User
 	var au AliasUser

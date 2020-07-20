@@ -133,7 +133,7 @@ func getWebIdentityCredentials(clnt *http.Client, endpoint, roleARN, roleSession
 
 	u.RawQuery = v.Encode()
 
-	req, err := http.NewRequest(http.MethodPost, u.String(), nil)
+	req, err := http.NewRequest("POST", u.String(), nil)
 	if err != nil {
 		return AssumeRoleWithWebIdentityResponse{}, err
 	}
@@ -173,9 +173,4 @@ func (m *STSWebIdentity) Retrieve() (Value, error) {
 		SessionToken:    a.Result.Credentials.SessionToken,
 		SignerType:      SignatureV4,
 	}, nil
-}
-
-// Expiration returns the expiration time of the credentials
-func (m *STSWebIdentity) Expiration() time.Time {
-	return m.expiration
 }
