@@ -24,7 +24,7 @@ import (
 	"os"
 	"path"
 
-	"github.com/minio/minio-go/v6"
+	"github.com/Bjorkbat/minio-go/v6"
 	"github.com/minio/sio"
 	"golang.org/x/crypto/argon2"
 )

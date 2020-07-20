@@ -42,9 +42,9 @@ import (
 
 	"golang.org/x/net/publicsuffix"
 
-	"github.com/minio/minio-go/v6/pkg/credentials"
-	"github.com/minio/minio-go/v6/pkg/s3utils"
-	"github.com/minio/minio-go/v6/pkg/signer"
+	"github.com/Bjorkbat/minio-go/v6/pkg/credentials"
+	"github.com/Bjorkbat/minio-go/v6/pkg/s3utils"
+	"github.com/Bjorkbat/minio-go/v6/pkg/signer"
 )
 
 // Client implements Amazon S3 compatible methods.
