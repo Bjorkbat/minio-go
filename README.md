@@ -1,6 +1,6 @@
 # MinIO Go Client SDK for Amazon S3 Compatible Cloud Storage [![Slack](https://slack.min.io/slack?type=svg)](https://slack.min.io) [![Sourcegraph](https://sourcegraph.com/github.com/Bjorkbat/minio-go/-/badge.svg)](https://sourcegraph.com/github.com/Bjorkbat/minio-go?badge) [![Apache V2 License](http://img.shields.io/badge/license-Apache%20V2-blue.svg)](https://github.com/Bjorkbat/minio-go/blob/master/LICENSE)
 
-The MinIO Go Client SDK provides simple APIs to access any Amazon S3 compatible object storagea.
+The MinIO Go Client SDK provides simple APIs to access any Amazon S3 compatible object storage.
 
 This quickstart guide will show you how to install the MinIO client SDK, connect to MinIO, and provide a walkthrough for a simple file uploader. For a complete list of APIs and examples, please take a look at the [Go Client API Reference](https://docs.min.io/docs/golang-client-api-reference).
 
