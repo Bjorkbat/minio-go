@@ -27,8 +27,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Bjorkbat/minio-go/v6/pkg/credentials"
-	"github.com/Bjorkbat/minio-go/v6/pkg/signer"
+	"github.com/minio/minio-go/v6/pkg/credentials"
+	"github.com/minio/minio-go/v6/pkg/signer"
 )
 
 // Test validates `newBucketLocationCache`.

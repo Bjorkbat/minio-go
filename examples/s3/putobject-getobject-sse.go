@@ -24,8 +24,8 @@ import (
 	"io/ioutil"
 	"log"
 
-	"github.com/Bjorkbat/minio-go/v6"
-	"github.com/Bjorkbat/minio-go/v6/pkg/encrypt"
+	"github.com/minio/minio-go/v6"
+	"github.com/minio/minio-go/v6/pkg/encrypt"
 )
 
 func main() {
